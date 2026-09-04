@@ -1,5 +1,5 @@
-# dsh-task-board 客户端插槽：与 dsh-memory 一致，使用 slot 注入
-client:
-  ts:
-    - "src/client/index.tsx"
-patch: "cordis.patch.yml"
+- insert:
+    - id: dsh-task-board
+      name: '@dsh-extra/dsh-task-board'
+      inject: []
+      config: {}
