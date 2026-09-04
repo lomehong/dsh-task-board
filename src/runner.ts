@@ -100,44 +100,68 @@ export class TaskRunner {
     return sessionId
   }
 
-  /** 完成判定：会话结束运行后回溯事件找 turn/end。 */
+  /** 完成判定：先 follow 唤醒会话（订阅事件流驱动 agent 循环消费排队消息），再回溯事件找 turn/end。 */
   async inspect(sessionId: string, startedAt: number): Promise<ExecutionOutcome> {
+    // follow 激活：dsh 的会话 agent 循环由事件订阅驱动——排队消息（session/prompt
+    // mode:queue）在无人订阅的新会话里不会自动执行。短促订阅一次即触发唤醒。
+    try {
+      const stream = await this.gateway.stream('session', 'follow', { address: sessionAddress(sessionId), maxMessages: 50 })
+      const iterator = (stream as AsyncIterable<unknown>)[Symbol.asyncIterator]()
+      const next = await iterator.next()
+      if (typeof iterator.return === 'function') await iterator.return()
+    } catch { /* follow 失败不阻断结算判定 */ }
     let items: ReadonlyArray<SessionSummary>
     try {
       const response = (await this.gateway.invoke('session', 'list')) as { items?: ReadonlyArray<SessionSummary> }
       items = response.items ?? []
-    } catch {
-      return { outcome: 'pending' } // 会话列表暂不可得：保持进行中，下轮再看
+    } catch (e) {
+      console.error('[dsh-task-board][inspect] session/list failed:', e instanceof Error ? e.message : String(e))
+      return { outcome: 'pending' }
     }
     const summary = items.find(item => item.sessionId === sessionId)
     if (summary === undefined) {
+      console.error(`[dsh-task-board][inspect] session ${sessionId} not in list (${items.length} sessions) → cancelled`)
       this.scanMemos.delete(sessionId)
       return { outcome: 'cancelled', error: '执行会话已不存在' }
     }
     if (summary.running === true) return { outcome: 'pending' }
 
-    // 会话已结束运行：拉最近事件找本任务启动后的 turn/end
+    // 会话已结束运行：follow 拿最新 cursor → page(throughSeq=cursor) 回溯找 turn/end
+    // （session/page 的 throughSeq 是 descriptor 必填字段，缺省会被 boundary validation 拒绝）
+    let cursor: number | undefined
+    try {
+      const stream = await this.gateway.stream('session', 'follow', { address: sessionAddress(sessionId), maxMessages: 1 })
+      const iterator = (stream as AsyncIterable<unknown>)[Symbol.asyncIterator]()
+      const next = await iterator.next()
+      if (typeof iterator.return === 'function') await iterator.return()
+      const follow = next.done === true ? undefined : next.value as { type?: string; cursor?: number }
+      if (follow === undefined || follow.type !== 'snapshot' || typeof follow.cursor !== 'number') {
+        return { outcome: 'pending' }
+      }
+      cursor = follow.cursor
+    } catch (e) {
+      console.error('[dsh-task-board][inspect] session/follow failed:', e instanceof Error ? e.message : String(e))
+      return { outcome: 'pending' }
+    }
+
     let page: SessionPage
     try {
       page = (await this.gateway.invoke('session', 'page', {
         address: sessionAddress(sessionId),
+        throughSeq: cursor,
         maxMessages: 200,
       })) as SessionPage
-    } catch {
+    } catch (e) {
+      console.error('[dsh-task-board][inspect] session/page failed:', e instanceof Error ? e.message : String(e))
       return { outcome: 'pending' }
     }
-    const newestSeq = page.records.reduce<number | undefined>((acc, r) => acc === undefined ? r.event.seq : Math.max(acc, r.event.seq), undefined)
-    if (newestSeq !== undefined && this.scanMemos.get(sessionId) === newestSeq) return { outcome: 'pending' } // 无新事件
 
     const turnEnd = page.records
       .map(r => r.event)
-      .filter(e => e.type === 'turn/end' && e.time * 1000 >= startedAt)
+      .filter(e => e.type === 'turn/end' && e.time >= startedAt)
       .sort((a, b) => a.seq - b.seq)[0]
-    if (turnEnd === undefined) {
-      if (newestSeq !== undefined) this.scanMemos.set(sessionId, newestSeq)
-      return { outcome: 'pending' }
-    }
-    this.scanMemos.delete(sessionId)
+    if (turnEnd === undefined) return { outcome: 'pending' }
+
     const data = turnEnd.data as { reason?: { kind?: string } } | null
     if (data !== null && typeof data === 'object' && typeof data.reason === 'object' && data.reason !== null && data.reason.kind === 'error') {
       return { outcome: 'failed', error: '分身执行轮次以错误结束' }

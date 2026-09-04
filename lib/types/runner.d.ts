@@ -42,6 +42,6 @@ export declare class TaskRunner {
     launch(task: TaskRecord): Promise<string>;
     /** 定时触发与手动共用同一投递链路，仅来源声明不同。 */
     launchScheduled(task: TaskRecord): Promise<string>;
-    /** 完成判定：会话结束运行后回溯事件找 turn/end。 */
+    /** 完成判定：先 follow 唤醒会话（订阅事件流驱动 agent 循环消费排队消息），再回溯事件找 turn/end。 */
     inspect(sessionId: string, startedAt: number): Promise<ExecutionOutcome>;
 }

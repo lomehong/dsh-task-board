@@ -23,6 +23,10 @@ interface FakeState {
   failOnCreate?: boolean
 }
 
+function method_check(args: unknown, want: string): boolean {
+  return true // follow 是该 namespace 唯一 stream 方法
+}
+
 function buildGateway(state: FakeState): TypertGateway {
   return {
     async invoke({ namespace, method, args }) {
@@ -52,11 +56,17 @@ function buildGateway(state: FakeState): TypertGateway {
         return { ok: true }
       }
       if (namespace === 'session' && method === 'page') {
-        return state.page(String(req.address.sessionId))
+        return state.page(String((req.address as { sessionId?: string }).sessionId ?? ''))
       }
       throw new Error(`未实现的 gateway 调用：${namespace}/${method}`)
     },
-    async stream({ namespace }) {
+    async stream({ namespace, args }) {
+      if (namespace === 'session' && method_check(args, 'follow')) {
+        const sid = String((args as { request?: { address?: { sessionId?: string } } }).request?.address?.sessionId ?? '')
+        // 返回 snapshot：cursor = 0，records 由 state.page 提供
+        const page = state.page(sid)
+        return { async *[Symbol.asyncIterator]() { yield { type: 'snapshot', cursor: 0, records: [], hasMore: page.records.length > 0 } } }
+      }
       throw new Error(`不支持 stream：${namespace}`)
     },
   }
@@ -108,7 +118,7 @@ describe('TaskRunner：执行会话与完成判定', () => {
   })
 
   it('inspect：会话不存在 → 已取消；会话结束运行 + turn/end success → 成功', async () => {
-    const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: () => ({ records: [{ event: { type: 'turn/end', seq: 1, time: Date.now() / 1000, data: { reason: { kind: 'finish' } } } }], hasMore: false }) }
+    const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: () => ({ records: [{ event: { type: 'turn/end', seq: 1, time: Date.now(), data: { reason: { kind: 'finish' } } } }], hasMore: false }) }
     const runner = new TaskRunner(buildGateway(state))
     const task = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
     const sid = await runner.launch(task)
@@ -119,7 +129,7 @@ describe('TaskRunner：执行会话与完成判定', () => {
   })
 
   it('inspect：turn/end 带 error → 失败', async () => {
-    const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: () => ({ records: [{ event: { type: 'turn/end', seq: 1, time: Date.now() / 1000, data: { reason: { kind: 'error' } } } }], hasMore: false }) }
+    const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: () => ({ records: [{ event: { type: 'turn/end', seq: 1, time: Date.now(), data: { reason: { kind: 'error' } } } }], hasMore: false }) }
     const runner = new TaskRunner(buildGateway(state))
     const task = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
     const sid = await runner.launch(task)

@@ -44,6 +44,11 @@ export class GatewayClient {
   invoke(namespace: string, method: string, request: Record<string, unknown> = {}): Promise<unknown> {
     return this.gateway.invoke({ namespace, method, args: wireArgs(namespace, method, request) })
   }
+
+  stream(namespace: string, method: string, request: Record<string, unknown>): Promise<AsyncIterable<unknown>> {
+    if (this.gateway.stream === undefined) throw new Error('gateway stream is unavailable')
+    return this.gateway.stream({ namespace, method, args: wireArgs(namespace, method, request) })
+  }
 }
 
 export function sessionAddress(sessionId: string): { kind: 'session'; sessionId: string } {

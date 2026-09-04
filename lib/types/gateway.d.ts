@@ -39,6 +39,7 @@ export declare class GatewayClient {
     private readonly gateway;
     constructor(gateway: TypertGateway);
     invoke(namespace: string, method: string, request?: Record<string, unknown>): Promise<unknown>;
+    stream(namespace: string, method: string, request: Record<string, unknown>): Promise<AsyncIterable<unknown>>;
 }
 export declare function sessionAddress(sessionId: string): {
     kind: 'session';

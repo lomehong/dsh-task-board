@@ -238,7 +238,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   )
 }
 
-export function applyBoard(ctx: ClientContext): void {
+export function apply(ctx: ClientContext): void {
   ctx.slots.inject('conversation.view', () =>
     ctx.slots.register(
       { name: 'conversation.view', id: 'task-board', order: 22, label: () => '任务看板' },

@@ -28,6 +28,7 @@ export interface ServiceOptions {
 
 export class TaskBoardService {
   private readonly runner: TaskRunner
+  logger?: { info?: (m: string) => void; warn?: (m: string) => void }
   private tickTimer?: ReturnType<typeof setInterval>
   private readonly tickIntervalMs: number
   private readonly defaultWorkspaceId: string | undefined
@@ -72,7 +73,7 @@ export class TaskBoardService {
     // 1) 账本裁决（fail-closed：账本缺席时 adjudicate 抛错 → 记为已阻断）
     let verdict
     try {
-      verdict = await adjudicate({
+      verdict = adjudicate({
         taskId,
         actionType: this.taskOf(taskId)?.actionType ?? '',
         targetScope: this.taskOf(taskId)?.targetScope ?? '',
@@ -91,6 +92,7 @@ export class TaskBoardService {
       return this.recordRun(taskId, {
         id: genId('RUN'), startedAt: startedAtIso, status: verdict.decision === '阻断' ? '待审批' : '已阻断',
         trigger,
+        ledgerRecordId: verdict.recordId,
         ...(verdict.reason !== undefined ? { summary: verdict.reason } : {}),
       })
     }
@@ -98,7 +100,7 @@ export class TaskBoardService {
     // 3) 放行：投递分身会话
     const task = this.taskOf(taskId)
     if (task === undefined) throw new Error(`任务不存在: ${taskId}`)
-    const run: RunRecord = { id: genId('RUN'), startedAt: startedAtIso, status: '运行中', trigger }
+    const run: RunRecord = { id: genId('RUN'), startedAt: startedAtIso, status: '运行中', trigger, ledgerRecordId: verdict.recordId }
     try {
       const sessionId = await this.runner.launch(task)
       run.sessionId = sessionId
@@ -128,6 +130,7 @@ export class TaskBoardService {
         const running = task.runs.filter(r => r.status === '运行中' && r.sessionId !== undefined)
         for (const run of running) {
           const outcome = await this.runner.inspect(run.sessionId!, Date.parse(run.startedAt))
+          this.logger?.info?.(`[dsh-task-board] inspect ${run.sessionId} → ${outcome.outcome}${'error' in outcome ? ` (${outcome.error})` : ''}`)
           if (outcome.outcome === 'pending') continue
           const finish: RunRecord = {
             ...run,
@@ -144,24 +147,18 @@ export class TaskBoardService {
             if (finish.finishedAt !== undefined) t.lastRunAt = finish.finishedAt
             t.column = finish.status === '成功' ? '已完成' : '已失败'
           })
-          if (outcome.outcome !== 'cancelled') {
+          if (outcome.outcome !== 'cancelled' && run.ledgerRecordId !== undefined) {
             const summary = outcome.outcome === 'succeeded'
               ? `任务 ${task.title} 执行成功（会话 ${run.sessionId}）`
               : `任务 ${task.title} 执行失败：${'error' in outcome ? outcome.error : '未知原因'}`
-            await fillResult(this.lastRecordIdFor(task.id), summary)
+            const filled = fillResult(run.ledgerRecordId, summary)
+            if (filled.ok) this.logger?.info?.(`[dsh-task-board] 结果已回填账本（${run.ledgerRecordId}）`)
           }
         }
       }
     } finally {
       this.ticking = false
     }
-  }
-
-  private lastRecordIdFor(_taskId: string): string {
-    // 账本回填以最近一条裁决记录为准：账本 records 里按 targetScope/时间匹配由
-    // fillResult 的调用方语义简化处理——v1 记录 id 由账本侧按最近记录回填。
-    // 这里返回空串占位会被 fillResult 优雅跳过。
-    return ''
   }
 
   private taskOf(taskId: string): TaskRecord | undefined {

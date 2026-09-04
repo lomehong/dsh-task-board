@@ -9,6 +9,8 @@ export interface RunRecord {
     status: RunStatus;
     /** 结果摘要（回填自账本执行结论） */
     summary?: string;
+    /** 账本裁决记录 id（执行结果回填到该记录） */
+    ledgerRecordId?: string;
     /** 触发方式 */
     trigger: '手动' | '定时';
 }

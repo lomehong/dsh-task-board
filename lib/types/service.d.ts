@@ -22,6 +22,10 @@ export interface ServiceOptions {
 }
 export declare class TaskBoardService {
     private readonly runner;
+    logger?: {
+        info?: (m: string) => void;
+        warn?: (m: string) => void;
+    };
     private tickTimer?;
     private readonly tickIntervalMs;
     private readonly defaultWorkspaceId;
@@ -42,7 +46,6 @@ export declare class TaskBoardService {
     run(taskId: string, trigger: '手动' | '定时'): Promise<RunRecord>;
     /** tick：调度触发 + 运行中执行的结果判定。 */
     tick(): Promise<void>;
-    private lastRecordIdFor;
     private taskOf;
     private recordRun;
     create(input: Parameters<typeof createTask>[0]): Promise<TaskRecord>;

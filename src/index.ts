@@ -103,6 +103,7 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
 
   // 1) service 立即组装 + 启动 cron tick（typertGateway 已通过 default 函数上的 inject 声明）
   const service = createService(ctx.typertGateway)
+  service.logger = ctx.logger
   const stop = service.start()
   log('任务看板服务已启动（cron tick + 运行中执行结算）')
 
