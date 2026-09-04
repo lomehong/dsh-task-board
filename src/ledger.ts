@@ -208,7 +208,8 @@ export function setArchived(id: string, archived: boolean): TaskRecord | undefin
   transact((store) => {
     const t = store.tasks.find(x => x.id === id)
     if (t === undefined) return
-    t.archived = archived || undefined
+    if (archived) t.archived = true
+    else delete t.archived
     if (archived) {
       // 归档任务退出看板活动列，停止调度（执行历史保留供查看）
       t.column = t.column === '进行中' ? '进行中' : t.column
