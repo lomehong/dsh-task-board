@@ -32,11 +32,7 @@ export interface GovernanceVerdict {
     approvalId?: string;
     reason?: string;
 }
-export interface LedgerFillResult {
-    ok: boolean;
-    error?: string;
-}
-interface LedgerModule {
+export interface LedgerModule {
     check(input: {
         actionType: unknown;
         targetScope: unknown;
@@ -63,15 +59,20 @@ interface LedgerModule {
         error?: string;
     };
 }
+export interface LedgerFillResult {
+    ok: boolean;
+    error?: string;
+}
 /**
- * 注入套件账本。为什么不 import 包名：套件插件各自独立仓库/独立 node_modules，
- * 跨包 import 在 link: 安装下依赖宿主的包提升，不可靠。宿主（cordis 同进程）
- * 在 apply 时把已加载的 dsh-ledger 模块对象注入进来；注入缺省视为账本缺席
- * （fail-closed：执行被拒绝并给出明确指引）。
+ * 注入套件账本的惰性获取器。
+ *
+ * 为什么不 import 包名：套件插件各自独立仓库/独立 node_modules，跨包 import
+ * 在 link: 安装下不可靠。账本由 cordis 同进程服务解析获得——dsh-ledger
+ * provide('dsh-ledger')，task-board 在 index.ts 里惰性 ctx.get。
+ * getter 返回 undefined 视为账本缺席（fail-closed：执行被拒并给出指引）。
  */
-export declare function injectLedger(mod: LedgerModule | undefined): void;
+export declare function injectLedgerGetter(getter: () => LedgerModule | undefined): void;
 /** 执行前裁决：放行才允许 launch；阻断时把审批令牌带回给调用方（进今日待办）。 */
 export declare function adjudicate(input: AdjudicateInput): GovernanceVerdict;
 /** 执行结束后回填账本（结果留痕闭环；失败静默——回填不阻断看板状态流转）。 */
 export declare function fillResult(recordId: string, summary: string): LedgerFillResult;
-export {};

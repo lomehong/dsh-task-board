@@ -12,7 +12,7 @@ import { createService } from '../src/service.ts'
 import { collectDueTasks } from '../src/scheduler.ts'
 import { cronMatches } from '../src/cron.ts'
 import { createTask, loadBoard, transact } from '../src/ledger.ts'
-import { injectLedger, type LedgerModule } from '../src/governance.ts'
+import { injectLedgerGetter, type LedgerModule } from '../src/governance.ts'
 
 interface FakeState {
   presets: Array<{ id: string; broken?: string }>
@@ -69,7 +69,7 @@ let home: string
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'tb-svc-'))
   process.env.DSH_HOME = home
-  injectLedger(undefined) // 重置账本注入——大多数测试只校验 fail-closed 行为
+  injectLedgerGetter(() => undefined) // 重置账本注入——大多数测试只校验 fail-closed 行为
 })
 
 afterEach(() => {
@@ -140,7 +140,7 @@ describe('治理：账本缺席 fail-closed', () => {
       check: () => ({ record: { id: 'R1', status: '已放行' }, judgment: { decision: '放行', level: 'L1' } }),
       fillResult: () => ({ ok: true }),
     }
-    injectLedger(fake)
+    injectLedgerGetter(() => fake)
     const { adjudicate } = await import('../src/governance.ts')
     const v = adjudicate({ taskId: 'X', actionType: 'a', targetScope: 'b', actionLevel: 'L1' })
     expect(v.allowed).toBe(true)
@@ -153,7 +153,7 @@ describe('治理：账本缺席 fail-closed', () => {
       check: () => ({ record: { id: 'R2', status: '已阻断' }, judgment: { decision: '阻断', level: 'L2' }, approval: { id: 'P1' } }),
       fillResult: () => ({ ok: true }),
     }
-    injectLedger(fake)
+    injectLedgerGetter(() => fake)
     const { adjudicate } = await import('../src/governance.ts')
     const v = adjudicate({ taskId: 'X', actionType: '敏感操作', targetScope: '外部', actionLevel: 'L2' })
     expect(v.allowed).toBe(false)
@@ -186,7 +186,7 @@ describe('scheduler：cron 触发与去重', () => {
 
 describe('service：执行状态机', () => {
   it('run：账本缺席记为「已阻断」并把原因记入 summary（fail-closed）', async () => {
-    injectLedger(undefined) // 测试环境确保账本缺席
+    injectLedgerGetter(() => undefined) // 测试环境确保账本缺席
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
     const svc = createService(buildGateway(state))
     const t = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
@@ -201,7 +201,7 @@ describe('service：执行状态机', () => {
       check: () => ({ record: { id: 'R1', status: '已放行' }, judgment: { decision: '放行', level: 'L1' } }),
       fillResult: () => ({ ok: true }),
     }
-    injectLedger(fake)
+    injectLedgerGetter(() => fake)
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
     const svc = createService(buildGateway(state))
     const t = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
@@ -216,7 +216,7 @@ describe('service：执行状态机', () => {
       check: vi.fn(() => ({ record: { id: 'R1', status: '已阻断' }, judgment: { decision: '阻断', level: 'L2' }, approval: { id: 'P1' } })),
       fillResult: () => ({ ok: true }),
     }
-    injectLedger(fake)
+    injectLedgerGetter(() => fake)
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
     const svc = createService(buildGateway(state))
     await svc.create({ title: '高危', prompt: 'p', actionType: '外部动作', targetScope: '外部', actionLevel: 'L2' })
@@ -228,7 +228,7 @@ describe('service：执行状态机', () => {
       check: vi.fn(() => ({ record: { id: 'R1', status: '已放行' }, judgment: { decision: '放行', level: 'L1' } })),
       fillResult: () => ({ ok: true }),
     }
-    injectLedger(fake)
+    injectLedgerGetter(() => fake)
     const svc = createService(buildGateway({ presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }))
     await svc.create({ title: '低风险', prompt: 'p', actionType: '整理', targetScope: '记忆库', actionLevel: 'L1' })
     expect(fake.check).not.toHaveBeenCalled()

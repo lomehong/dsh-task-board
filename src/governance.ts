@@ -35,36 +35,40 @@ export interface GovernanceVerdict {
   reason?: string
 }
 
+export interface LedgerModule {
+  check(input: { actionType: unknown; targetScope: unknown; levelHint?: unknown; digest?: unknown }): {
+    record: { id: string; status: string }
+    judgment: { decision: string; level: string }
+    approval?: { id: string }
+  }
+  fillResult(recordId: string, input: { summary?: unknown; masterFeedback?: unknown }): { ok: boolean; error?: string }
+}
+
 export interface LedgerFillResult {
   ok: boolean
   error?: string
 }
 
-interface LedgerModule {
-  check(input: { actionType: unknown; targetScope: unknown; levelHint?: unknown; digest?: unknown }):
-    { record: { id: string; status: string }; judgment: { decision: string; level: string }; approval?: { id: string } }
-  fillResult(recordId: string, input: { summary?: unknown; masterFeedback?: unknown }): { ok: boolean; error?: string }
-}
-
-let ledgerModule: LedgerModule | undefined
-let probeDone = false
+let ledgerGetter: () => LedgerModule | undefined = () => undefined
 
 /**
- * 注入套件账本。为什么不 import 包名：套件插件各自独立仓库/独立 node_modules，
- * 跨包 import 在 link: 安装下依赖宿主的包提升，不可靠。宿主（cordis 同进程）
- * 在 apply 时把已加载的 dsh-ledger 模块对象注入进来；注入缺省视为账本缺席
- * （fail-closed：执行被拒绝并给出明确指引）。
+ * 注入套件账本的惰性获取器。
+ *
+ * 为什么不 import 包名：套件插件各自独立仓库/独立 node_modules，跨包 import
+ * 在 link: 安装下不可靠。账本由 cordis 同进程服务解析获得——dsh-ledger
+ * provide('dsh-ledger')，task-board 在 index.ts 里惰性 ctx.get。
+ * getter 返回 undefined 视为账本缺席（fail-closed：执行被拒并给出指引）。
  */
-export function injectLedger(mod: LedgerModule | undefined): void {
-  probeDone = true
-  ledgerModule = mod
+export function injectLedgerGetter(getter: () => LedgerModule | undefined): void {
+  ledgerGetter = getter
 }
 
 function ledger(): LedgerModule {
-  if (!probeDone || ledgerModule === undefined) {
-    throw new Error('账本缺席：任务执行需要 dsh-ledger（套件组件）。请安装并确保 dsh-task-board 在其之后加载。')
+  const mod = ledgerGetter()
+  if (mod === undefined) {
+    throw new Error('账本缺席：任务执行需要 dsh-ledger（套件组件），请安装 @dsh-extra/dsh-ledger')
   }
-  return ledgerModule
+  return mod
 }
 
 /** 执行前裁决：放行才允许 launch；阻断时把审批令牌带回给调用方（进今日待办）。 */
@@ -93,9 +97,10 @@ export function adjudicate(input: AdjudicateInput): GovernanceVerdict {
 
 /** 执行结束后回填账本（结果留痕闭环；失败静默——回填不阻断看板状态流转）。 */
 export function fillResult(recordId: string, summary: string): LedgerFillResult {
-  if (!probeDone || ledgerModule === undefined) return { ok: false, error: '账本缺席' }
+  let mod: LedgerModule
+  try { mod = ledger() } catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) } }
   try {
-    return ledgerModule.fillResult(recordId, { summary })
+    return mod.fillResult(recordId, { summary })
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
