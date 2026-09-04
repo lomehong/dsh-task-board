@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>dsh 任务看板（设计预览）</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --layer1: #fff; --layer2: #f0f2f5;
+    --border1: #e4e6ea; --border2: #d0d3d8;
+    --label1: #16181c; --label2: #4a4d54; --label3: #76797f;
+    --primary: #4a6cf7; --primary-bg: #eaf0ff;
+    --success: #2a8f4e; --success-bg: #e6f4ec;
+    --warn: #b45b00; --warn-bg: #fff3e3;
+    --error: #c43d3d; --error-bg: #fbeaea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; font-size: 13px; color: var(--label1); background: var(--bg); }
+  .head { padding: 14px 20px 8px; background: var(--layer1); border-bottom: 1px solid var(--border1); }
+  .head h1 { margin: 0 0 4px; font-size: 18px; font-weight: 700; }
+  .head p { margin: 0; color: var(--label3); font-size: 12px; }
+  .actions { display: flex; align-items: center; gap: 10px; padding: 10px 20px; background: var(--layer2); border-bottom: 1px solid var(--border1); }
+  .btn { padding: 7px 16px; border: none; border-radius: 8px; background: var(--primary); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn2 { padding: 6px 14px; border: 1px solid var(--border2); border-radius: 8px; background: var(--layer1); color: var(--label2); font-size: 12.5px; cursor: pointer; }
+  .badge { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .bOk { background: var(--success-bg); color: var(--success); }
+  .bWarn { background: var(--warn-bg); color: var(--warn); }
+  .bErr { background: var(--error-bg); color: var(--error); }
+  .bIdle { background: #ecedef; color: var(--label2); }
+  .board { display: flex; gap: 12px; padding: 14px 20px; overflow-x: auto; }
+  .col { flex: 1 1 0; min-width: 240px; background: var(--layer1); border-radius: 12px; border: 1px solid var(--border1); display: flex; flex-direction: column; }
+  .colHead { padding: 10px 12px; border-bottom: 1px solid var(--border1); display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: 12.5px; }
+  .colCount { background: var(--layer2); border-radius: 999px; padding: 1px 8px; font-size: 11.5px; color: var(--label2); }
+  .colBody { padding: 8px; flex: 1; }
+  .card { background: var(--layer1); border: 1px solid var(--border2); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  .card:hover { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(74,108,247,0.08); }
+  .cardTitle { font-weight: 600; margin-bottom: 4px; font-size: 13.5px; }
+  .cardMeta { color: var(--label3); font-size: 11.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .cardDesc { color: var(--label2); font-size: 12.5px; line-height: 1.55; max-height: 60px; overflow: hidden; }
+  .cardActions { display: flex; gap: 6px; margin-top: 8px; }
+  .cardActions .btn2 { padding: 4px 10px; font-size: 12px; }
+  .empty { padding: 24px 16px; text-align: center; color: var(--label3); font-size: 12.5px; line-height: 1.6; }
+  .empty b { color: var(--label1); }
+  .modal { position: fixed; inset: 0; background: rgba(20,22,26,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .modalBox { background: var(--layer1); border-radius: 14px; padding: 20px 22px; max-width: 520px; width: 90%; box-shadow: 0 10px 40px rgba(0,0,0,0.2); }
+  .modalTitle { font-size: 16px; font-weight: 700; margin: 0 0 10px; }
+  .modalField { margin-bottom: 12px; }
+  .modalField label { display: block; font-size: 12px; color: var(--label2); margin-bottom: 4px; }
+  .modalField input, .modalField select, .modalField textarea { width: 100%; box-sizing: border-box; padding: 6px 10px; border: 1px solid var(--border2); border-radius: 6px; font-size: 13px; font-family: inherit; }
+  .modalField textarea { min-height: 80px; resize: vertical; }
+  .modalActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>任务看板 <span class="badge bOk">✓ 治理就绪</span></h1>
+    <p>任务中心化——布置 → 账本裁决 → 分身执行 → 结果回填。所有任务默认由全工具分身执行，不可逆动作过 dsh-ledger。</p>
+  </div>
+  <div class="actions">
+    <button class="btn">+ 新建任务</button>
+    <button class="btn2">仅看未完成</button>
+    <button class="btn2">显示归档</button>
+    <span style="margin-left:auto; color:var(--label3); font-size:12px;">共 4 个任务 · 最近 tick 5 秒前</span>
+  </div>
+  <div class="board">
+    <div class="col">
+      <div class="colHead">待规划 <span class="colCount">1</span></div>
+      <div class="colBody">
+        <div class="card">
+          <div class="cardTitle">每周整理记忆库摘要</div>
+          <div class="cardMeta">
+            <span class="badge bIdle">L1</span>
+            <span>每周五 18:00</span>
+          </div>
+          <div class="cardDesc">汇总本周记忆库新增条目，按主题分类输出到状态卡</div>
+          <div class="cardActions"><button class="btn2">▶ 立即执行</button><button class="btn2">⋯</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="colHead">待办 <span class="colCount">1</span></div>
+      <div class="colBody">
+        <div class="card">
+          <div class="cardTitle">发布 v1.0 changelog 到记忆库</div>
+          <div class="cardMeta">
+            <span class="badge bIdle">L1</span>
+            <span>一次性 · 由我手动触发</span>
+          </div>
+          <div class="cardDesc">把当前版本要点写入 master 范围的记忆条目</div>
+          <div class="cardActions"><button class="btn2">▶ 执行</button><button class="btn2">⋯</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="colHead">进行中 <span class="colCount">1</span></div>
+      <div class="colBody">
+        <div class="card">
+          <div class="cardTitle">把 dsh-task-board 包接入 install-all.bat</div>
+          <div class="cardMeta">
+            <span class="badge bIdle">L0</span>
+            <span class="badge bWarn">运行中 · 会话 S-42</span>
+          </div>
+          <div class="cardDesc">补 PLUGINS 段、检测构建产物、更新总仓库 README 指针</div>
+          <div class="cardActions"><button class="btn2">查看会话</button><button class="btn2">取消</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="colHead">已完成 <span class="colCount">0</span></div>
+      <div class="colBody">
+        <div class="empty">没有完成的任务。<br>所有布置的任务都已执行完毕——继续布置下一个！</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="colHead">已失败 <span class="colCount">1</span></div>
+      <div class="colBody">
+        <div class="card">
+          <div class="cardTitle">给客户 A 发送周末优惠邮件</div>
+          <div class="cardMeta">
+            <span class="badge bErr">L2</span>
+            <span class="badge bErr">已拒绝：账本裁决拒绝该动作</span>
+          </div>
+          <div class="cardDesc">邮件内容生成成功，但 ledger 判定为不可逆对外发布，需主人确认。审批令牌已过期</div>
+          <div class="cardActions"><button class="btn2">查看详情</button><button class="btn2">⋯</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建任务弹窗 -->
+  <div class="modal">
+    <div class="modalBox">
+      <h2 class="modalTitle">新建任务</h2>
+      <div class="modalField">
+        <label>任务标题</label>
+        <input type="text" value="每周整理记忆库摘要" />
+      </div>
+      <div class="modalField">
+        <label>任务提示词（投递给分身的内容）</label>
+        <textarea>汇总本周记忆库新增条目，按主题分类输出到状态卡，标注每条来源会话</textarea>
+      </div>
+      <div class="modalField">
+        <label>动作类型（账本裁决输入）</label>
+        <input type="text" value="整理汇报" />
+      </div>
+      <div class="modalField">
+        <label>目标范围</label>
+        <input type="text" value="记忆库" />
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div class="modalField">
+          <label>动作级别</label>
+          <select><option>L0</option><option selected>L1</option><option>L2</option><option>L3</option></select>
+        </div>
+        <div class="modalField">
+          <label>cron（留空 = 仅手动）</label>
+          <input type="text" value="0 18 * * 5" placeholder="分 时 日 月 周" />
+        </div>
+      </div>
+      <div style="background: var(--layer2); padding: 8px 10px; border-radius: 6px; font-size: 12px; color: var(--label2); margin-top: 6px;">
+        ℹ L2/L3 创建时立即触发账本裁决：若阻断会产生审批令牌，进入今日待办「待批审批」
+      </div>
+      <div class="modalActions">
+        <button class="btn2">取消</button>
+        <button class="btn">保存到待办</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
