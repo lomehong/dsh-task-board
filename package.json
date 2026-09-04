@@ -1,0 +1,39 @@
+{
+  "name": "@dsh-extra/dsh-task-board",
+  "version": "0.1.0",
+  "description": "任务看板：任务中心化的看板与调度执行——Host 权威账本、cron 调度、真实分身会话执行、账本裁决闭环",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./ledger": {
+      "types": "./lib/types/ledger.d.ts",
+      "default": "./lib/ledger.js"
+    },
+    "./cron": {
+      "types": "./lib/types/cron.d.ts",
+      "default": "./lib/cron.js"
+    }
+  },
+  "files": [
+    "lib/**"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -b tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0-rc.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.7"
+  }
+}
