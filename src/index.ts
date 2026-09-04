@@ -5,8 +5,13 @@
  * 模式与 dsh-twin 完全一致：
  * - webServer 用 ctx.inject 延迟注入（cordis 严格：直接 ctx.webServer 访问会报
  *   "Cannot get property webServer without inject"）
- * - 路由注册返回的 disposer 用 web.effect(fn) 集中收集（fn 返回卸载函数）
+ * - 路由注册返回的 disposer 用 web.effect(fn) 集中（fn 返回卸载函数）
  * - 日志走 ctx.logger（cordis 开放服务，免声明）
+ *
+ * 导出形态：`export default apply`（与 dsh-yuyi 一致）——cordis-plugin-loader 的
+ * unwrapExports 优先取 .default，避免 namespace 对象的 null-prototype 形态
+ * 在不同 Node 版本下被 isApplicable 误判（命名导出 apply 在某些运行时下
+ * 不会被识别为 plugin.apply）。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { createService } from './service.ts'
@@ -83,7 +88,7 @@ function handleAction(service: ReturnType<typeof createService>, req: RequestLik
   })()
 }
 
-export function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: (m: string) => void; warn?: (m: string) => void } }): void {
+export default function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: (m: string) => void; warn?: (m: string) => void } }): void {
   const log = (m: string) => ctx.logger?.info?.(`[dsh-task-board] ${m}`)
   const warn = (m: string) => ctx.logger?.warn?.(`[dsh-task-board] ${m}`)
 
@@ -115,7 +120,6 @@ export function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { 
         return () => { for (const d of disposers) d(); stop() }
       })
     } else {
-      // 旧宿主无 effect API：直接注册并接受热重载时路由悬挂
       web.register({ kind: 'exact', path: '/dsh-task-board/state', handler: (_req, res) => respondJson(res, 200, { ok: true, state: service.state() }) })
       web.register({ kind: 'exact', path: '/dsh-task-board/action', handler: (req, res) => { void handleAction(service, req, res) } })
       log('HTTP 路由已注册（/dsh-task-board/*；宿主无 effect API）')
