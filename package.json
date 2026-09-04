@@ -18,15 +18,23 @@
     "./cron": {
       "types": "./lib/types/cron.d.ts",
       "default": "./lib/cron.js"
-    }
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./client.js": "./lib/client.js"
   },
   "files": [
-    "lib/**"
+    "cordis.patch.yml",
+    "lib/**",
+    "scripts/**"
   ],
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "test": "vitest run",
-    "typecheck": "tsc -b tsconfig.json --noEmit"
+    "typecheck": "tsc -b tsconfig.json --noEmit",
+    "build:client": "node scripts/build-client.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0-rc.0"
@@ -34,6 +42,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
     "@types/node": "^26.4.1",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
     "vitest": "^3.2.7"
   }
