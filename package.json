@@ -45,5 +45,17 @@
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
     "vitest": "^3.2.7"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    }
   }
 }
