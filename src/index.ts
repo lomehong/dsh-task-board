@@ -15,7 +15,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { createService } from './service.ts'
-import { injectLedgerGetter, type LedgerModule } from './governance.ts'
+import { injectLedgerGetter, injectNotifier, type LedgerModule } from './governance.ts'
 import type { TypertGateway } from './gateway.ts'
 
 interface RequestLike {
@@ -96,6 +96,43 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
   injectLedgerGetter(() => {
     try {
       return (ctx as unknown as { get(name: string): unknown }).get('dsh-ledger') as LedgerModule | undefined
+    } catch {
+      return undefined
+    }
+  })
+
+  // 主任通知器（可选增强，宪章 §3.2）：无账本治理模式下 L2 动作降级运行时，
+  // 尽力经 im-channel 主人绑定推送告知。im-channel 缺席/未绑定主人/推送失败
+  // 一律静默跳过——通知是缓解措施，不是闸门（宪章 §3.2 降级第二要素）。
+  injectNotifier(() => {
+    try {
+      const im = (ctx as unknown as { get(name: string): unknown }).get('im-channel') as
+        | {
+          botsStatus(): Array<{ kind: string; bindings?: Array<{ isMaster?: boolean; userId?: string }> }>
+          pushToUser(kind: string, userId: string, text: string, opts?: { markdown?: boolean }): Promise<boolean> | boolean
+        }
+        | undefined
+      if (im === undefined || typeof im.botsStatus !== 'function' || typeof im.pushToUser !== 'function') return undefined
+      return async ({ title, message }) => {
+        const seen = new Set<string>()
+        const targets: Array<{ kind: string; userId: string }> = []
+        for (const bot of im.botsStatus()) {
+          for (const b of bot.bindings ?? []) {
+            if (b.isMaster === true && b.userId !== undefined && !seen.has(b.userId)) {
+              seen.add(b.userId)
+              targets.push({ kind: bot.kind, userId: b.userId })
+            }
+          }
+        }
+        // 跨渠道去重后上限 3（与 dsh-twin 转人工同一预算哲学：保护主任注意力）
+        let delivered = 0
+        for (const t of targets.slice(0, 3)) {
+          try {
+            if (await im.pushToUser(t.kind, t.userId, `【${title}】${message}`, { markdown: true })) delivered += 1
+          } catch { /* 单目标失败不阻断其余目标 */ }
+        }
+        return delivered > 0
+      }
     } catch {
       return undefined
     }

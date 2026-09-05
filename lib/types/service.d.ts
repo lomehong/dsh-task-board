@@ -1,10 +1,11 @@
 /**
  * 任务看板服务组装：状态快照 + 动作分发 + tick 循环。
  *
- * 执行状态机：
- *   run(task) → 账本裁决
- *     ├─ 阻断 → RunRecord「待审批」+ 审批令牌（今日待办可见）→ 主人批准后重试 run 放行
+ * 执行状态机（治理模式由账本在场与否决定，见 governance.ts）：
+ *   run(task) → 治理裁决
+ *     ├─ 账本阻断 → RunRecord「待审批」+ 审批令牌（今日待办可见）→ 主人批准后重试 run 放行
  *     ├─ 拒绝 → RunRecord「已阻断」
+ *     ├─ 账本缺席本地降级 → L0/L1/L2 放行（summary 标注「无账本治理」）、L3 拒绝（任务保留待办列）
  *     └─ 放行 → launch 创建分身会话 → RunRecord「运行中」
  *   tick → 对运行中的 RunRecord 做 inspect：
  *     ├─ succeeded → RunRecord「成功」+ 回填账本 + 任务列「已完成」
@@ -33,14 +34,17 @@ export declare class TaskBoardService {
     constructor(gateway: TypertGateway, options?: ServiceOptions);
     /** 宿主接线后启动 tick 循环；返回停止函数。 */
     start(): () => void;
-    /** 状态快照（浏览器异步视图的完整数据面）。 */
+    /** 状态快照（浏览器异步视图的完整数据面）。governance.mode 供客户端渲染治理徽标。 */
     state(): TaskBoardStore & {
         scheduler: {
             lastTickAt?: string;
         };
+        governance: {
+            mode: '账本' | '本地';
+        };
     };
     private lastTickAt?;
-    /** 创建任务并按声明的动作级别做**预裁决**：L2 及以上立即产生审批令牌（不等首次执行）。 */
+    /** 创建任务并按声明的动作级别做**预裁决**：L2 及以上立即产生审批令牌（不等首次执行）。账本缺席时不预裁决——由本地降级策略在执行时处理。 */
     createWithGovernance(input: Parameters<typeof createTask>[0]): Promise<TaskRecord>;
     /** 执行任务：账本裁决 → 放行则投递分身会话。返回执行记录（含审批令牌时为待审批）。 */
     run(taskId: string, trigger: '手动' | '定时'): Promise<RunRecord>;

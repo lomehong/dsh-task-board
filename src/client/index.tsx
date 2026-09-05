@@ -28,7 +28,10 @@ interface TaskRecord {
   lastRunAt?: string; lastSessionId?: string; lastStatus?: string
   runs: RunRecord[]
 }
-interface BoardState { schemaVersion: number; revision: number; tasks: TaskRecord[] }
+interface BoardState {
+  schemaVersion: number; revision: number; tasks: TaskRecord[]
+  governance?: { mode?: '账本' | '本地' }
+}
 
 const COLUMNS: Array<{ id: Column; label: string }> = [
   { id: '待规划', label: '待规划' },
@@ -45,6 +48,7 @@ const s: Record<string, React.CSSProperties> = {
   head: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 },
   h: { fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--dsw-alias-label-primary)' },
   badge: { fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 999, background: 'var(--dsw-alias-state-success-tertiary)', color: 'var(--dsw-alias-state-success-primary)' },
+  badgeDegraded: { fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 999, background: 'var(--dsw-alias-state-warn-tertiary)', color: 'var(--dsw-alias-state-warn-primary)' },
   sub: { fontSize: 12.5, color: 'var(--dsw-alias-label-tertiary)', margin: '0 0 12px', lineHeight: 1.6 },
   actionRow: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' as const, padding: '10px 14px', marginBottom: 12, background: 'var(--dsw-alias-bg-layer-2)', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12 },
   btn: { padding: '7px 18px', border: 'none', borderRadius: 8, background: 'var(--dsw-alias-state-business-primary)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
@@ -116,7 +120,16 @@ function BoardPage() {
     <div style={s.wrap}>
       <div style={s.head}>
         <h1 style={s.h}>任务看板</h1>
-        <span style={s.badge}>✓ 治理就绪</span>
+        {state.governance?.mode === '本地' ? (
+          <span
+            style={s.badgeDegraded}
+            title="dsh-ledger 未安装：L0/L1/L2 任务降级运行（summary 标注「无账本治理」），L3 不可逆动作一律拒绝。安装账本后恢复完整 L0-L3 审批治理。"
+          >
+            ⚠ 账本未安装 · 本地降级治理
+          </span>
+        ) : (
+          <span style={s.badge}>✓ 治理就绪</span>
+        )}
       </div>
       <p style={s.sub}>
         任务中心化——布置 → 账本裁决 → 分身执行 → 结果回填。所有任务默认由全工具分身执行，不可逆动作过 dsh-ledger。L2/L3 任务创建时立即触发裁决。
@@ -225,7 +238,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
         </div>
         {(actionLevel === 'L2' || actionLevel === 'L3') && (
           <div style={s.modalHint}>
-            ℹ L2/L3 任务创建时立即触发账本裁决：若阻断会产生审批令牌，进入今日待办「待批审批」。
+            ℹ L2/L3 任务创建时立即触发账本裁决：若阻断会产生审批令牌，进入今日待办「待批审批」。账本未安装时按本地降级策略执行——L2 放行并尽力通知主任，L3 一律拒绝。
           </div>
         )}
         {err !== '' && <div style={{ ...s.modalHint, background: 'var(--dsw-alias-state-error-tertiary)', color: 'var(--dsw-alias-state-error-primary)' }}>{err}</div>}

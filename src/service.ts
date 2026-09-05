@@ -1,10 +1,11 @@
 /**
  * 任务看板服务组装：状态快照 + 动作分发 + tick 循环。
  *
- * 执行状态机：
- *   run(task) → 账本裁决
- *     ├─ 阻断 → RunRecord「待审批」+ 审批令牌（今日待办可见）→ 主人批准后重试 run 放行
+ * 执行状态机（治理模式由账本在场与否决定，见 governance.ts）：
+ *   run(task) → 治理裁决
+ *     ├─ 账本阻断 → RunRecord「待审批」+ 审批令牌（今日待办可见）→ 主人批准后重试 run 放行
  *     ├─ 拒绝 → RunRecord「已阻断」
+ *     ├─ 账本缺席本地降级 → L0/L1/L2 放行（summary 标注「无账本治理」）、L3 拒绝（任务保留待办列）
  *     └─ 放行 → launch 创建分身会话 → RunRecord「运行中」
  *   tick → 对运行中的 RunRecord 做 inspect：
  *     ├─ succeeded → RunRecord「成功」+ 回填账本 + 任务列「已完成」
@@ -14,7 +15,7 @@
 import type { TypertGateway } from './gateway.ts'
 import { GatewayClient } from './gateway.ts'
 import { TaskRunner } from './runner.ts'
-import { adjudicate, fillResult } from './governance.ts'
+import { adjudicate, fillResult, ledgerAvailable } from './governance.ts'
 import { loadBoard, saveBoard, transact, createTask, updateTask, setArchived, deleteTask, genId, MAX_RUNS_PER_TASK } from './ledger.ts'
 import type { TaskRecord, RunRecord, TaskBoardStore } from './ledger.ts'
 import { collectDueTasks } from './scheduler.ts'
@@ -46,21 +47,25 @@ export class TaskBoardService {
     return () => { if (this.tickTimer !== undefined) clearInterval(this.tickTimer) }
   }
 
-  /** 状态快照（浏览器异步视图的完整数据面）。 */
-  state(): TaskBoardStore & { scheduler: { lastTickAt?: string } } {
+  /** 状态快照（浏览器异步视图的完整数据面）。governance.mode 供客户端渲染治理徽标。 */
+  state(): TaskBoardStore & { scheduler: { lastTickAt?: string }; governance: { mode: '账本' | '本地' } } {
     const store = loadBoard()
-    return { ...store, scheduler: this.lastTickAt !== undefined ? { lastTickAt: this.lastTickAt } : {} }
+    return {
+      ...store,
+      scheduler: this.lastTickAt !== undefined ? { lastTickAt: this.lastTickAt } : {},
+      governance: { mode: ledgerAvailable() ? '账本' : '本地' },
+    }
   }
 
   private lastTickAt?: string
 
-  /** 创建任务并按声明的动作级别做**预裁决**：L2 及以上立即产生审批令牌（不等首次执行）。 */
+  /** 创建任务并按声明的动作级别做**预裁决**：L2 及以上立即产生审批令牌（不等首次执行）。账本缺席时不预裁决——由本地降级策略在执行时处理。 */
   async createWithGovernance(input: Parameters<typeof createTask>[0]): Promise<TaskRecord> {
     const task = createTask(input)
-    if (task.actionLevel === 'L2' || task.actionLevel === 'L3') {
+    if (ledgerAvailable() && (task.actionLevel === 'L2' || task.actionLevel === 'L3')) {
       try {
         await adjudicate({ taskId: task.id, actionType: task.actionType, targetScope: task.targetScope, actionLevel: task.actionLevel })
-      } catch { /* 账本缺席等错误延迟到执行时暴露 */ }
+      } catch { /* 账本瞬态错误延迟到执行时暴露 */ }
     }
     return task
   }
@@ -70,7 +75,7 @@ export class TaskBoardService {
     const startedAtMs = Date.now()
     const startedAtIso = new Date(startedAtMs).toISOString()
 
-    // 1) 账本裁决（fail-closed：账本缺席时 adjudicate 抛错 → 记为已阻断）
+    // 1) 治理裁决（账本缺席时 adjudicate 走本地降级策略，不再抛错）
     let verdict
     try {
       verdict = adjudicate({
@@ -87,20 +92,25 @@ export class TaskBoardService {
       })
     }
 
-    // 2) 阻断/拒绝：落审批令牌，不投递
+    // 2) 阻断/拒绝：落审批令牌，不投递。本地降级的 L3 拒绝保留待办列（不落已失败
+    //    ——任务本身合法，治理恢复后即可执行）
     if (!verdict.allowed) {
       return this.recordRun(taskId, {
         id: genId('RUN'), startedAt: startedAtIso, status: verdict.decision === '阻断' ? '待审批' : '已阻断',
         trigger,
-        ledgerRecordId: verdict.recordId,
+        ...(verdict.recordId !== undefined ? { ledgerRecordId: verdict.recordId } : {}),
         ...(verdict.reason !== undefined ? { summary: verdict.reason } : {}),
-      })
+      }, verdict.mode === '本地' ? { keepColumn: true } : undefined)
     }
 
-    // 3) 放行：投递分身会话
+    // 3) 放行：投递分身会话（本地降级时 summary 带降级标注，供主任审阅）
     const task = this.taskOf(taskId)
     if (task === undefined) throw new Error(`任务不存在: ${taskId}`)
-    const run: RunRecord = { id: genId('RUN'), startedAt: startedAtIso, status: '运行中', trigger, ledgerRecordId: verdict.recordId }
+    const run: RunRecord = {
+      id: genId('RUN'), startedAt: startedAtIso, status: '运行中', trigger,
+      ...(verdict.recordId !== undefined ? { ledgerRecordId: verdict.recordId } : {}),
+      ...(verdict.reason !== undefined ? { summary: verdict.reason } : {}),
+    }
     try {
       const sessionId = await this.runner.launch(task)
       run.sessionId = sessionId
@@ -165,7 +175,7 @@ export class TaskBoardService {
     return loadBoard().tasks.find(t => t.id === taskId)
   }
 
-  private recordRun(taskId: string, run: RunRecord, opts?: { failColumn?: boolean }): RunRecord {
+  private recordRun(taskId: string, run: RunRecord, opts?: { failColumn?: boolean; keepColumn?: boolean }): RunRecord {
     transact((store: TaskBoardStore) => {
       const t = store.tasks.find(x => x.id === taskId)
       if (t === undefined) return
@@ -175,7 +185,8 @@ export class TaskBoardService {
       t.lastStatus = run.status
       if (run.sessionId !== undefined) t.lastSessionId = run.sessionId
       if (run.status === '运行中') t.column = '进行中'
-      if (opts?.failColumn === true || run.status === '失败' || run.status === '已阻断') t.column = '已失败'
+      const blocked = run.status === '已阻断' && opts?.keepColumn !== true
+      if (opts?.failColumn === true || run.status === '失败' || blocked) t.column = '已失败'
       if (run.status === '成功') t.column = '已完成'
       t.updatedAt = new Date().toISOString()
     })

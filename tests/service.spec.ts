@@ -1,6 +1,7 @@
 /**
  * 执行/调度/治理集成测试：使用 stub Gateway 模拟 0.1.2 系会话网关，
- * 覆盖失败-closed 钉扎、执行成功/失败回填、cron 调度触发、账本缺席拒绝。
+ * 覆盖失败-closed 钉扎、执行成功/失败回填、cron 调度触发、账本缺席本地降级
+ * （宪章 §3.5：L0/L1/L2 降级放行、L3 拒绝保列）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -12,7 +13,7 @@ import { createService } from '../src/service.ts'
 import { collectDueTasks } from '../src/scheduler.ts'
 import { cronMatches } from '../src/cron.ts'
 import { createTask, loadBoard, transact } from '../src/ledger.ts'
-import { injectLedgerGetter, type LedgerModule } from '../src/governance.ts'
+import { injectLedgerGetter, injectNotifier, type LedgerModule } from '../src/governance.ts'
 
 interface FakeState {
   presets: Array<{ id: string; broken?: string }>
@@ -139,10 +140,41 @@ describe('TaskRunner：执行会话与完成判定', () => {
   })
 })
 
-describe('治理：账本缺席 fail-closed', () => {
-  it('adjudicate 在账本缺席时抛错（含安装指引），符合决策二的 fail-closed 原则', async () => {
+describe('治理：账本在场完整裁决 / 缺席本地降级（宪章 §3.5）', () => {
+  it('账本缺席进入本地降级：L1 放行且 mode=本地（核心功能不因治理缺席失效）', async () => {
     const { adjudicate } = await import('../src/governance.ts')
-    expect(() => adjudicate({ taskId: 'X', actionType: 'a', targetScope: 'b', actionLevel: 'L1' })).toThrow(/账本缺席/)
+    const v = adjudicate({ taskId: 'X', actionType: 'a', targetScope: 'b', actionLevel: 'L1' })
+    expect(v.allowed).toBe(true)
+    expect(v.mode).toBe('本地')
+    expect(v.recordId).toBeUndefined()
+    expect(v.reason).toMatch(/无账本治理/)
+  })
+
+  it('账本缺席本地降级：L3 不可逆动作一律拒绝（保守侧收敛）', async () => {
+    const { adjudicate } = await import('../src/governance.ts')
+    const v = adjudicate({ taskId: 'X', actionType: '转账', targetScope: '外部', actionLevel: 'L3' })
+    expect(v.allowed).toBe(false)
+    expect(v.mode).toBe('本地')
+    expect(v.decision).toBe('已拒绝')
+    expect(v.reason).toMatch(/无账本治理|拒绝/)
+  })
+
+  it('账本缺席本地降级：L2 放行并尽力通知主任（notifier 被调用）', async () => {
+    const calls: Array<{ title: string; message: string }> = []
+    injectNotifier(() => (input) => { calls.push(input); return true })
+    const { adjudicate } = await import('../src/governance.ts')
+    const v = adjudicate({ taskId: 'X', actionType: '对外承诺', targetScope: '外部', actionLevel: 'L2' })
+    expect(v.allowed).toBe(true)
+    expect(v.mode).toBe('本地')
+    await vi.waitFor(() => { expect(calls).toHaveLength(1) })
+    expect(calls[0]?.message).toContain('X')
+  })
+
+  it('通知器缺席时 L2 仍放行（通知是缓解措施，不是闸门）', async () => {
+    injectNotifier(() => undefined)
+    const { adjudicate } = await import('../src/governance.ts')
+    const v = adjudicate({ taskId: 'X', actionType: '对外承诺', targetScope: '外部', actionLevel: 'L2' })
+    expect(v.allowed).toBe(true)
   })
 
   it('注入账本后 adjudicate 返回 GovernanceVerdict', async () => {
@@ -155,6 +187,7 @@ describe('治理：账本缺席 fail-closed', () => {
     const v = adjudicate({ taskId: 'X', actionType: 'a', targetScope: 'b', actionLevel: 'L1' })
     expect(v.allowed).toBe(true)
     expect(v.decision).toBe('放行')
+    expect(v.mode).toBe('账本')
     expect(v.recordId).toBe('R1')
   })
 
@@ -195,15 +228,40 @@ describe('scheduler：cron 触发与去重', () => {
 })
 
 describe('service：执行状态机', () => {
-  it('run：账本缺席记为「已阻断」并把原因记入 summary（fail-closed）', async () => {
+  it('run：账本缺席本地降级——L1 放行运行，summary 标注无账本治理', async () => {
     injectLedgerGetter(() => undefined) // 测试环境确保账本缺席
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
     const svc = createService(buildGateway(state))
     const t = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
     const run = await svc.run(t.id, '手动')
+    expect(run.status).toBe('运行中')
+    expect(run.sessionId).toBe('S-1')
+    expect(run.summary).toMatch(/无账本治理/)
+    expect(loadBoard().tasks.find(x => x.id === t.id)?.column).toBe('进行中')
+  })
+
+  it('run：账本缺席本地降级——L3 拒绝且不派发，任务保留待办列', async () => {
+    injectLedgerGetter(() => undefined)
+    injectNotifier(() => undefined)
+    const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
+    const svc = createService(buildGateway(state))
+    const t = createTask({ title: '高危', prompt: 'p', actionType: '转账', targetScope: '外部', actionLevel: 'L3' })
+    const run = await svc.run(t.id, '手动')
     expect(run.status).toBe('已阻断')
-    expect(run.summary).toMatch(/账本缺席/)
-    expect(loadBoard().tasks.find(x => x.id === t.id)?.column).toBe('已失败')
+    expect(run.sessionId).toBeUndefined()
+    expect(state.prompts).toHaveLength(0)
+    const task = loadBoard().tasks.find(x => x.id === t.id)
+    expect(task?.column).toBe('待办') // 保留待办：治理恢复后即可执行
+    expect(task?.lastStatus).toBe('已阻断')
+  })
+
+  it('state：治理模式随账本在场与否切换', async () => {
+    injectLedgerGetter(() => undefined)
+    const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
+    const svc = createService(buildGateway(state))
+    expect(svc.state().governance.mode).toBe('本地')
+    injectLedgerGetter(() => ({ check: () => ({ record: { id: 'R', status: '已放行' }, judgment: { decision: '放行', level: 'L1' } }), fillResult: () => ({ ok: true }) }))
+    expect(svc.state().governance.mode).toBe('账本')
   })
 
   it('run：账本放行 → 投递会话成功 → 记录「运行中」', async () => {

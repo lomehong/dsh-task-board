@@ -1,7 +1,7 @@
 /**
- * 账本裁决联动（决策二：账本是一等公民）。
+ * 治理裁决联动（决策二 + 套件宪章 v1.0 修订：治理是可选层，不是生存条件）。
  *
- * 任务执行前过 dsh-ledger 裁决（同进程直接调用 ledger 的 check 纯函数——
+ * 账本在场：执行前过 dsh-ledger 裁决（同进程直接调用 ledger 的 check 纯函数——
  * cordis 全部插件同进程，Node 单线程内同步调用天然串行，与 HTTP 形态的
  * 裁决共享同一份 ledger.json 单写者存储，无并发交错）。
  *
@@ -13,8 +13,14 @@
  *
  * 结果回填：执行结束后 fillResult 把结果摘要写回账本记录（账本留痕闭环）。
  *
- * 依赖探测：@dsh-extra/dsh-ledger 缺席时**拒绝执行**（fail-closed）——
- * 账本是治理前提，不是可选项；错误信息明确指引安装套件账本。
+ * 账本缺席（套件宪章 §1 原则二「运行独立」+ §3.5「治理自治」）：进入**本地降级
+ * 策略**——核心功能（执行任务）保持可用，治理面显式降级：
+ * - L0/L1：放行，RunRecord.summary 标注「无账本治理」
+ * - L2：放行 + 尽力通知主任（经注入的 notifier，通常接 im-channel 主人绑定）；
+ *   通知失败不阻断核心路径
+ * - L3：拒绝——不可逆动作（转账/删数据/账号操作等）在治理缺席时一律不放行，
+ *   任务保留在待办列（不落已失败），安装账本后即可恢复完整治理
+ * 客户端按 state().governance.mode 渲染治理徽标（账本就绪 / 本地降级）。
  */
 
 export interface AdjudicateInput {
@@ -24,12 +30,16 @@ export interface AdjudicateInput {
   actionLevel: 'L0' | 'L1' | 'L2' | 'L3'
 }
 
+/** 治理模式：账本在场走完整裁决；缺席走本地降级策略 */
+export type GovernanceMode = '账本' | '本地'
+
 export interface GovernanceVerdict {
   allowed: boolean
   decision: '放行' | '阻断' | '已拒绝'
   level: string
-  /** 账本裁决记录 id（留痕，可回查） */
-  recordId: string
+  mode: GovernanceMode
+  /** 账本裁决记录 id（留痕，可回查；仅账本模式——本地模式无账本记录） */
+  recordId?: string
   /** 阻断时产生的审批令牌 id（主人批准后重试放行） */
   approvalId?: string
   reason?: string
@@ -49,18 +59,38 @@ export interface LedgerFillResult {
   error?: string
 }
 
+/** 本地降级模式的主任通知器（通常由插件入口接 im-channel 主人绑定）。 */
+export interface LocalGovernanceNotifier {
+  (input: { title: string; message: string }): boolean | Promise<boolean>
+}
+
 let ledgerGetter: () => LedgerModule | undefined = () => undefined
+let notifierGetter: (() => LocalGovernanceNotifier | undefined) | undefined
 
 /**
  * 注入套件账本的惰性获取器。
  *
  * 为什么不 import 包名：套件插件各自独立仓库/独立 node_modules，跨包 import
- * 在 link: 安装下不可靠。账本由 cordis 同进程服务解析获得——dsh-ledger
- * provide('dsh-ledger')，task-board 在 index.ts 里惰性 ctx.get。
- * getter 返回 undefined 视为账本缺席（fail-closed：执行被拒并给出指引）。
+ * 在 link: 安装下不可靠（宪章 §1 原则一）。账本由 cordis 同进程服务解析获得
+ * ——dsh-ledger provide('dsh-ledger')，task-board 在 index.ts 里惰性 ctx.get。
+ * getter 返回 undefined 视为账本缺席 → 本地降级策略（adjudicateLocal）。
  */
 export function injectLedgerGetter(getter: () => LedgerModule | undefined): void {
   ledgerGetter = getter
+}
+
+/**
+ * 注入主任通知器（可选增强）：本地降级模式下 L2 动作尽力经此通知主任。
+ * 通常由插件入口接 im-channel（botsStatus 找主人绑定 + pushToUser）；
+ * 返回 undefined 表示通知通道不可用——通知失败绝不阻断执行。
+ */
+export function injectNotifier(getter: () => LocalGovernanceNotifier | undefined): void {
+  notifierGetter = getter
+}
+
+/** 账本是否在场（客户端治理徽标与创建期预裁决的探测口）。 */
+export function ledgerAvailable(): boolean {
+  return ledgerGetter() !== undefined
 }
 
 function ledger(): LedgerModule {
@@ -71,10 +101,44 @@ function ledger(): LedgerModule {
   return mod
 }
 
-/** 执行前裁决：放行才允许 launch；阻断时把审批令牌带回给调用方（进今日待办）。 */
+/**
+ * 本地降级策略（账本缺席时的最小内嵌治理）：
+ * - L3 拒绝（保守侧：不可逆动作宁拒不滥）
+ * - L2 放行 + 尽力通知主任
+ * - L0/L1 放行
+ * 所有本地裁决都带降级原因，由 service 写入 RunRecord.summary 供主任审阅。
+ */
+function adjudicateLocal(input: AdjudicateInput): GovernanceVerdict {
+  if (input.actionLevel === 'L3') {
+    return {
+      allowed: false, decision: '已拒绝', level: 'L3', mode: '本地',
+      reason: '无账本治理：L3 不可逆动作在治理缺席时一律拒绝（安装 @dsh-extra/dsh-ledger 以启用审批流）',
+    }
+  }
+  if (input.actionLevel === 'L2') {
+    const notify = notifierGetter?.()
+    if (notify !== undefined) {
+      // 尽力通知，失败不阻断（宪章 §3.2：通知是缓解措施，不是闸门）
+      void Promise.resolve(notify({
+        title: '任务看板 · 无账本治理',
+        message: `任务 ${input.taskId}（${input.actionType} → ${input.targetScope}）为 L2 动作，账本缺席降级运行：未经审批直接执行。`,
+      })).catch(() => {})
+    }
+    return {
+      allowed: true, decision: '放行', level: 'L2', mode: '本地',
+      reason: '无账本治理：L2 动作未经审批直接执行（降级运行）',
+    }
+  }
+  return {
+    allowed: true, decision: '放行', level: input.actionLevel, mode: '本地',
+    reason: '无账本治理：降级运行（安装 @dsh-extra/dsh-ledger 启用 L0-L3 审批治理）',
+  }
+}
+
+/** 执行前裁决：账本在场走完整裁决；缺席走本地降级策略。放行才允许 launch。 */
 export function adjudicate(input: AdjudicateInput): GovernanceVerdict {
-  const mod = ledger()
-  const result = mod.check({
+  if (!ledgerAvailable()) return adjudicateLocal(input)
+  const result = ledger().check({
     actionType: input.actionType,
     targetScope: input.targetScope,
     levelHint: input.actionLevel,
@@ -82,17 +146,17 @@ export function adjudicate(input: AdjudicateInput): GovernanceVerdict {
   })
   const decision = result.judgment.decision
   if (decision === '放行') {
-    return { allowed: true, decision: '放行', level: result.judgment.level, recordId: result.record.id }
+    return { allowed: true, decision: '放行', level: result.judgment.level, mode: '账本', recordId: result.record.id }
   }
   if (decision === '阻断') {
     return {
-      allowed: false, decision: '阻断', level: result.judgment.level,
+      allowed: false, decision: '阻断', level: result.judgment.level, mode: '账本',
       recordId: result.record.id,
       ...(result.approval?.id !== undefined ? { approvalId: result.approval.id } : {}),
       reason: '动作级别需要主人批准——审批令牌已生成（今日待办可见），批准后重新执行即可放行',
     }
   }
-  return { allowed: false, decision: '已拒绝', level: result.judgment.level, recordId: result.record.id, reason: '账本裁决拒绝该动作' }
+  return { allowed: false, decision: '已拒绝', level: result.judgment.level, mode: '账本', recordId: result.record.id, reason: '账本裁决拒绝该动作' }
 }
 
 /** 执行结束后回填账本（结果留痕闭环；失败静默——回填不阻断看板状态流转）。 */
