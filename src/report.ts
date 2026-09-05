@@ -1,0 +1,82 @@
+/**
+ * 执行结果上报（模型侧 → 看板）：task_report 工具的落地实现。
+ *
+ * 设计：分身会话在执行看板任务时调用 task_report，把**模型自己声明的**
+ * 结果状态与摘要回填到最新的「运行中」执行记录，并联动任务列与账本留痕。
+ * 上报即终态——运行记录立即落定，tick 的 turn/end 推断降级为
+ * 「模型未上报时」的兜底（消除自由文本没人消费、宿主模板句回填的断点）。
+ *
+ * 本模块与宿主入口共享同一 ledger.ts 单写者事务（同模块单例），
+ * 多进程并发由文件锁 + 原子重命名兜底（同 memory-store 约定）。
+ */
+import { transact, loadBoard, type TaskRecord, type RunRecord } from './ledger.ts'
+import { fillResult } from './governance.ts'
+
+/** 上报状态：任务级二元终态（部分完成以 summary 说明，状态按实际达成填）。 */
+export type ReportStatus = '成功' | '失败'
+
+export interface ReportInput {
+  status: ReportStatus
+  summary: string
+}
+
+export interface ReportOutcome {
+  ok: boolean
+  error?: string
+  task?: TaskRecord
+  run?: RunRecord
+}
+
+/**
+ * 上报执行结果：定位该任务最新的「运行中」执行记录并落定终态。
+ * 账本记录在位时同步回填模型真实摘要（替代宿主模板句）。
+ *
+ * @param taskId - 看板任务 id（投递提示词中携带）。
+ * @param input - status + summary。
+ * @returns 上报结果；任务不存在或无进行中执行时 ok=false。
+ */
+export function reportTaskResult(taskId: string, input: ReportInput): ReportOutcome {
+  if (input.status !== '成功' && input.status !== '失败') {
+    return { ok: false, error: `status 必须是 成功 或 失败（收到: ${String(input.status)}）` }
+  }
+  const trimmed = input.summary.trim()
+  if (trimmed === '') return { ok: false, error: 'summary 必填（给主任看的结果摘要）' }
+
+  const ledgerRecordId: string | undefined = (() => {
+    const task = loadBoard().tasks.find(t => t.id === taskId)
+    if (task === undefined) return undefined
+    const running = [...task.runs].reverse().find(r => r.status === '运行中')
+    return running?.ledgerRecordId
+  })()
+
+  let settled: RunRecord | undefined
+  let updated: TaskRecord | undefined
+  transact((store) => {
+    const task = store.tasks.find(t => t.id === taskId)
+    if (task === undefined || task.archived === true) return
+    const running = [...task.runs].reverse().find(r => r.status === '运行中')
+    if (running === undefined) return
+    running.status = input.status
+    running.finishedAt = new Date().toISOString()
+    running.summary = trimmed
+    task.lastStatus = input.status
+    task.lastRunAt = running.finishedAt
+    task.column = input.status === '成功' ? '已完成' : '已失败'
+    task.updatedAt = task.lastRunAt
+    settled = running
+    updated = task
+  })
+
+  if (settled === undefined || updated === undefined) {
+    return { ok: false, error: `任务 ${taskId} 没有进行中的执行可上报（不存在、已归档或已结算）` }
+  }
+
+  // 账本留痕：用模型真实摘要回填（无账本记录时静默跳过——本地降级模式）
+  if (ledgerRecordId !== undefined) {
+    const filled = fillResult(ledgerRecordId, `任务 ${taskId} 执行${input.status}（分身自报）：${trimmed}`)
+    if (!filled.ok) {
+      // 回填失败不影响看板终态；留痕缺口在下次审计可见
+    }
+  }
+  return { ok: true, task: updated, run: settled }
+}

@@ -25,6 +25,10 @@ export interface ServiceOptions {
   defaultWorkspaceId?: string
   /** tick 间隔毫秒（缺省 15s；测试可调小） */
   tickIntervalMs?: number
+  /** 投递失败时的自动重试次数（缺省 0 = 不重试；仅重试 launch 传输失败，不重试任务内容失败） */
+  launchRetries?: number
+  /** 重试间隔基数毫秒（缺省 500ms，按次数线性退避） */
+  retryBackoffMs?: number
 }
 
 export class TaskBoardService {
@@ -33,12 +37,16 @@ export class TaskBoardService {
   private tickTimer?: ReturnType<typeof setInterval>
   private readonly tickIntervalMs: number
   private readonly defaultWorkspaceId: string | undefined
+  private readonly launchRetries: number
+  private readonly retryBackoffMs: number
   private ticking = false
 
   constructor(gateway: TypertGateway, options: ServiceOptions = {}) {
     this.runner = new TaskRunner(new GatewayClient(gateway))
     this.tickIntervalMs = options.tickIntervalMs ?? 15_000
     this.defaultWorkspaceId = options.defaultWorkspaceId !== undefined ? options.defaultWorkspaceId : undefined
+    this.launchRetries = Math.max(0, options.launchRetries ?? 0)
+    this.retryBackoffMs = Math.max(0, options.retryBackoffMs ?? 500)
   }
 
   /** 宿主接线后启动 tick 循环；返回停止函数。 */
@@ -112,7 +120,24 @@ export class TaskBoardService {
       ...(verdict.reason !== undefined ? { summary: verdict.reason } : {}),
     }
     try {
-      const sessionId = await this.runner.launch(task)
+      // 投递重试：仅针对 launch 传输失败（会话创建/投递抛错），按线性退避
+      let sessionId: string | undefined
+      let lastError: unknown
+      for (let attempt = 0; attempt <= this.launchRetries; attempt++) {
+        try {
+          sessionId = await this.runner.launch(task, trigger)
+          lastError = undefined
+          break
+        } catch (e) {
+          lastError = e
+          if (attempt < this.launchRetries) {
+            await new Promise(resolve => setTimeout(resolve, this.retryBackoffMs * (attempt + 1)))
+          }
+        }
+      }
+      if (lastError !== undefined || sessionId === undefined) {
+        throw lastError instanceof Error ? lastError : new Error(String(lastError ?? '任务投递失败'))
+      }
       run.sessionId = sessionId
     } catch (e) {
       run.status = '失败'

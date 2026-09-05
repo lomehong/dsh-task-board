@@ -38,10 +38,9 @@ export declare class TaskRunner {
     constructor(gateway: GatewayClient | TypertGateway, 
     /** 执行预设 id；缺省 digital-twin（决策五：分身是唯一执行身份） */
     presetId?: string);
-    /** 投递任务：返回执行会话 id。任何一步失败都抛错（fail-closed，不静默降级）。 */
-    launch(task: TaskRecord): Promise<string>;
-    /** 定时触发与手动共用同一投递链路，仅来源声明不同。 */
-    launchScheduled(task: TaskRecord): Promise<string>;
+    /** 投递任务：返回执行会话 id。任何一步失败都抛错（fail-closed，不静默降级）。
+     *  @param trigger 来源声明（手动/定时）——写入投递提示词，让分身知道任务由谁触发。 */
+    launch(task: TaskRecord, trigger?: '手动' | '定时'): Promise<string>;
     /** 完成判定：先 follow 唤醒会话（订阅事件流驱动 agent 循环消费排队消息），再回溯事件找 turn/end。 */
     inspect(sessionId: string, startedAt: number): Promise<ExecutionOutcome>;
 }

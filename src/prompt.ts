@@ -21,6 +21,9 @@ export function composePrompt(input: PromptInput): string {
     '',
     body,
     '',
-    '（本条消息由任务看板自动投递，非主人即时输入。完成后请汇报结果摘要。）',
+    '（本条消息由任务看板自动投递，非主人即时输入。执行约定：',
+    '1. 完成后用 task_report 工具上报结果——status 填 成功/失败，summary 写给主任看的结果摘要；',
+    '2. 过程中拆解步骤用 todo/goal 等会话层工具即可，属会话内脚手架，无需回写看板；',
+    `3. 如需把部分工作委派给远端协作者，用御驿任务工具（yuyi_task_attach 等）并沿用任务号 ${input.taskId}，看板与协同面板均可追溯。）`,
   ].join('\n')
 }

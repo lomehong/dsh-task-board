@@ -42,8 +42,9 @@ export class TaskRunner {
     this.gateway = gateway instanceof GatewayClient ? gateway : new GatewayClient(gateway)
   }
 
-  /** 投递任务：返回执行会话 id。任何一步失败都抛错（fail-closed，不静默降级）。 */
-  async launch(task: TaskRecord): Promise<string> {
+  /** 投递任务：返回执行会话 id。任何一步失败都抛错（fail-closed，不静默降级）。
+   *  @param trigger 来源声明（手动/定时）——写入投递提示词，让分身知道任务由谁触发。 */
+  async launch(task: TaskRecord, trigger: '手动' | '定时' = '手动'): Promise<string> {
     // 预设校验（fail-closed 钉扎）：broken 预设的会话挂不出来
     const presets = (await this.gateway.invoke('agentPresets', 'list')) as {
       presets?: ReadonlyArray<{ id: string; broken?: string }>
@@ -64,35 +65,7 @@ export class TaskRunner {
         sessionId,
         requestId: 'task-board-' + crypto.randomUUID(),
         mode: 'queue',
-        content: [{ type: 'text', text: composePrompt({ title: task.title, prompt: task.prompt, taskId: task.id, trigger: '手动' }) }],
-      })
-    } catch (error) {
-      throw new LaunchError(sessionId, `任务投递失败: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    return sessionId
-  }
-
-  /** 定时触发与手动共用同一投递链路，仅来源声明不同。 */
-  async launchScheduled(task: TaskRecord): Promise<string> {
-    const presets = (await this.gateway.invoke('agentPresets', 'list')) as {
-      presets?: ReadonlyArray<{ id: string; broken?: string }>
-    }
-    const preset = presets.presets?.find(item => item.id === this.presetId)
-    if (preset === undefined) throw new LaunchError(undefined, `执行预设不存在: ${this.presetId}`)
-    if (preset.broken !== undefined) throw new LaunchError(undefined, `执行预设不可用: ${preset.broken}`)
-    let sessionId: string | undefined
-    try {
-      const created = (await this.gateway.invoke('session', 'create', {
-        ...(task.workspaceId !== undefined ? { workspaceId: task.workspaceId } : {}),
-        agentPreset: this.presetId,
-      })) as { sessionId: string }
-      sessionId = created.sessionId
-      await this.gateway.invoke('session', 'rename', { sessionId, title: task.title })
-      await this.gateway.invoke('session', 'prompt', {
-        sessionId,
-        requestId: 'task-board-' + crypto.randomUUID(),
-        mode: 'queue',
-        content: [{ type: 'text', text: composePrompt({ title: task.title, prompt: task.prompt, taskId: task.id, trigger: '定时' }) }],
+        content: [{ type: 'text', text: composePrompt({ title: task.title, prompt: task.prompt, taskId: task.id, trigger }) }],
       })
     } catch (error) {
       throw new LaunchError(sessionId, `任务投递失败: ${error instanceof Error ? error.message : String(error)}`)

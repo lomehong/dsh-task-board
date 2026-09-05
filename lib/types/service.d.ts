@@ -20,6 +20,10 @@ export interface ServiceOptions {
     defaultWorkspaceId?: string;
     /** tick 间隔毫秒（缺省 15s；测试可调小） */
     tickIntervalMs?: number;
+    /** 投递失败时的自动重试次数（缺省 0 = 不重试；仅重试 launch 传输失败，不重试任务内容失败） */
+    launchRetries?: number;
+    /** 重试间隔基数毫秒（缺省 500ms，按次数线性退避） */
+    retryBackoffMs?: number;
 }
 export declare class TaskBoardService {
     private readonly runner;
@@ -30,6 +34,8 @@ export declare class TaskBoardService {
     private tickTimer?;
     private readonly tickIntervalMs;
     private readonly defaultWorkspaceId;
+    private readonly launchRetries;
+    private readonly retryBackoffMs;
     private ticking;
     constructor(gateway: TypertGateway, options?: ServiceOptions);
     /** 宿主接线后启动 tick 循环；返回停止函数。 */
