@@ -39,6 +39,14 @@ export interface BoardActivity {
         sessionId: string;
         title?: string;
     }>;
+    /** 自由会话里进行中的自主目标（goal 折叠，objective 截断 40 字，封顶 3） */
+    goals: Array<{
+        sessionId: string;
+        title?: string;
+        objective: string;
+        roundsStarted: number;
+        maxGoalRounds: number;
+    }>;
     /** 待主任审批的任务 */
     pendingApprovals: Array<{
         taskId: string;

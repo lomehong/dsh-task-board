@@ -39,6 +39,8 @@ export declare class GatewayClient {
     private readonly gateway;
     constructor(gateway: TypertGateway);
     invoke(namespace: string, method: string, request?: Record<string, unknown>): Promise<unknown>;
+    /** 直通调用：调用方自行组装完整 spec（如 goals/create 的 agentId+request 双参形态）。 */
+    invokeSpec(spec: GatewayInvokeSpec): Promise<unknown>;
     stream(namespace: string, method: string, request: Record<string, unknown>): Promise<AsyncIterable<unknown>>;
 }
 export declare function sessionAddress(sessionId: string): {

@@ -15,14 +15,21 @@
 import { GatewayClient, sessionAddress, type SessionPage, type SessionSummary, type TypertGateway } from './gateway.ts'
 import { composePrompt } from './prompt.ts'
 import type { TaskRecord } from './ledger.ts'
+import { foldGoalFromRecords, goalCreateSpec, GOAL_ROUNDS_BY_LEVEL } from './goals.ts'
 
 export const EXECUTION_PRESET = 'digital-twin'
 
 export type ExecutionOutcome =
   | { outcome: 'pending' }
-  | { outcome: 'succeeded' }
-  | { outcome: 'failed'; error: string }
+  | { outcome: 'succeeded'; goalPhase?: 'complete' }
+  | { outcome: 'failed'; error: string; goalPhase?: 'blocked' }
   | { outcome: 'cancelled'; error: string }
+
+export interface LaunchResult {
+  sessionId: string
+  /** 已为执行会话播种原生 goal（播种失败/不适用级别为 false） */
+  goalSeeded: boolean
+}
 
 export class LaunchError extends Error {
   constructor(readonly sessionId: string | undefined, message: string) {
@@ -42,9 +49,10 @@ export class TaskRunner {
     this.gateway = gateway instanceof GatewayClient ? gateway : new GatewayClient(gateway)
   }
 
-  /** 投递任务：返回执行会话 id。任何一步失败都抛错（fail-closed，不静默降级）。
+  /** 投递任务：返回执行会话与 goal 播种状态。投递失败抛错（fail-closed）；
+   *  goal 播种失败降级（goalSeeded=false，结算退回 turn/end 语义）。
    *  @param trigger 来源声明（手动/定时）——写入投递提示词，让分身知道任务由谁触发。 */
-  async launch(task: TaskRecord, trigger: '手动' | '定时' = '手动'): Promise<string> {
+  async launch(task: TaskRecord, trigger: '手动' | '定时' = '手动'): Promise<LaunchResult> {
     // 预设校验（fail-closed 钉扎）：broken 预设的会话挂不出来
     const presets = (await this.gateway.invoke('agentPresets', 'list')) as {
       presets?: ReadonlyArray<{ id: string; broken?: string }>
@@ -70,11 +78,25 @@ export class TaskRunner {
     } catch (error) {
       throw new LaunchError(sessionId, `任务投递失败: ${error instanceof Error ? error.message : String(error)}`)
     }
-    return sessionId
+    // L2 goal 播种（审计路线第二批）：执行会话获得自主推进预算——一轮没做完
+    // goal-round 驱动继续，直到 complete/blocked 才结算（结算感知 goal 相位）。
+    // 播种失败降级为 turn/end 结算（goalSeeded=false），绝不影响投递。
+    let goalSeeded = false
+    const goalRounds = GOAL_ROUNDS_BY_LEVEL[task.actionLevel]
+    if (sessionId !== undefined && goalRounds !== undefined) {
+      try {
+        const objective = `${task.title}：${task.prompt.slice(0, 80)}`
+        await this.gateway.invokeSpec(goalCreateSpec(sessionId, objective, goalRounds))
+        goalSeeded = true
+      } catch { /* 播种失败：降级为 turn/end 结算，不影响任务投递 */ }
+    }
+    return { sessionId: sessionId, goalSeeded }
   }
 
-  /** 完成判定：先 follow 唤醒会话（订阅事件流驱动 agent 循环消费排队消息），再回溯事件找 turn/end。 */
-  async inspect(sessionId: string, startedAt: number): Promise<ExecutionOutcome> {
+  /** 完成判定：先 follow 唤醒会话（订阅事件流驱动 agent 循环消费排队消息），再回溯事件找 turn/end。
+   *  @param opts.goalSeeded 执行会话已播种原生 goal 时，turn/end 只代表一轮结束——
+   *   以 goal 相位结算：active → 继续等（下一轮）、complete → 成功、blocked → 失败（含受阻原因）。 */
+  async inspect(sessionId: string, startedAt: number, opts: { goalSeeded?: boolean } = {}): Promise<ExecutionOutcome> {
     // follow 激活：dsh 的会话 agent 循环由事件订阅驱动——排队消息（session/prompt
     // mode:queue）在无人订阅的新会话里不会自动执行。短促订阅一次即触发唤醒。
     try {
@@ -131,9 +153,22 @@ export class TaskRunner {
 
     const turnEnd = page.records
       .map(r => r.event)
-      .filter(e => e.type === 'turn/end' && e.time >= startedAt)
-      .sort((a, b) => a.seq - b.seq)[0]
+      .filter(e => e.type === 'turn/end' && typeof e.time === 'number' && e.time >= startedAt)
+      .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))[0]
     if (turnEnd === undefined) return { outcome: 'pending' }
+
+    // goal 相位结算梯子（L2 播种后启用）：turn/end ≠ 完成判断，goal 终相才是。
+    if (opts.goalSeeded === true) {
+      const goal = foldGoalFromRecords(page.records)
+      if (goal !== undefined) {
+        if (goal.phase === 'active') return { outcome: 'pending' }
+        if (goal.phase === 'complete') return { outcome: 'succeeded', goalPhase: 'complete' }
+        if (goal.phase === 'blocked') {
+          return { outcome: 'failed', error: goal.blockedMessage ?? '自主目标受阻', goalPhase: 'blocked' }
+        }
+        // paused：人为暂停不再续跑 → 按 turn/end 结果结算（legacy 语义）
+      }
+    }
 
     const data = turnEnd.data as { reason?: { kind?: string } } | null
     if (data !== null && typeof data === 'object' && typeof data.reason === 'object' && data.reason !== null && data.reason.kind === 'error') {

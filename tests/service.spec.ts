@@ -93,8 +93,9 @@ describe('TaskRunner：执行会话与完成判定', () => {
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
     const runner = new TaskRunner(buildGateway(state))
     const task = createTask({ title: '汇总', prompt: '做汇总', actionType: '整理', targetScope: '记忆库', actionLevel: 'L1' })
-    const sid = await runner.launch(task)
+    const { sessionId: sid, goalSeeded } = await runner.launch(task)
     expect(sid).toBe('S-1')
+    expect(goalSeeded).toBe(false) // fake gateway 未实现 goals/create → 播种降级
     expect(state.sessions.get(sid)?.title).toBe('汇总')
     expect(state.prompts).toHaveLength(1)
     expect(state.prompts[0]?.text).toContain('任务看板执行')
@@ -122,7 +123,7 @@ describe('TaskRunner：执行会话与完成判定', () => {
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: () => ({ records: [{ event: { type: 'turn/end', seq: 1, time: Date.now(), data: { reason: { kind: 'finish' } } } }], hasMore: false }) }
     const runner = new TaskRunner(buildGateway(state))
     const task = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
-    const sid = await runner.launch(task)
+    const { sessionId: sid } = await runner.launch(task)
     // 模拟执行完毕（不再 running）
     state.sessions.get(sid)!.running = false
     const outcome = await runner.inspect(sid, Date.now() - 1000)
@@ -133,7 +134,7 @@ describe('TaskRunner：执行会话与完成判定', () => {
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: () => ({ records: [{ event: { type: 'turn/end', seq: 1, time: Date.now(), data: { reason: { kind: 'error' } } } }], hasMore: false }) }
     const runner = new TaskRunner(buildGateway(state))
     const task = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
-    const sid = await runner.launch(task)
+    const { sessionId: sid } = await runner.launch(task)
     state.sessions.get(sid)!.running = false
     const outcome = await runner.inspect(sid, Date.now() - 1000)
     expect(outcome.outcome).toBe('failed')

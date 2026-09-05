@@ -49,6 +49,19 @@ describe('activityView（看板 = 唯一活动权威）', () => {
             { sessionId: 'sess-idle', running: false, title: '闲置' },
           ] }
         }
+        if (spec.namespace === 'session' && spec.method === 'page') {
+          // 自由会话的 goal/change 事件（objective > 40 字 → 验证看板侧截断）
+          return { records: [
+            { event: { type: 'goal/change', seq: 9, time: 1, data: {
+              kind: 'goal/change', goal: {
+                id: 'g1', revision: 3, phase: 'active',
+                objective: '这是一个超过四十字的很长的自主目标描述需要在活动视图里被截断以保证提示词紧凑与可读性不失控',
+                maxGoalRounds: 5,
+              },
+              roundsStarted: 2,
+            } } },
+          ] }
+        }
         return { records: [] }
       },
       stream: async () => { throw new Error('测试无事件流') },
@@ -61,6 +74,13 @@ describe('activityView（看板 = 唯一活动权威）', () => {
     expect(act.freeSessions).toEqual([{ sessionId: 'sess-free', title: '自由现场' }])
     expect(act.recentCompleted.map(x => x.title)).toContain('任务C 已完成')
     expect(act.recentCompleted[0]?.summary).toBe('整理完毕')
+    expect(act.goals).toHaveLength(1)
+    expect(act.goals[0].sessionId).toBe('sess-free')
+    expect(act.goals[0].objective.startsWith('这是一个超过四十字')).toBe(true)
+    expect(act.goals[0].objective.endsWith('…')).toBe(true)
+    expect(act.goals[0].objective.length).toBeLessThanOrEqual(41)
+    expect(act.goals[0].roundsStarted).toBe(2)
+    expect(act.goals[0].maxGoalRounds).toBe(5)
   })
 
   it('session/list 失败：会话维度降级留空，任务维度照常', async () => {

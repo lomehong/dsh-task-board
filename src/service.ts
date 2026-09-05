@@ -13,10 +13,11 @@
  *     └─ cancelled → RunRecord「已取消」+ 任务列「已失败」
  */
 import type { TypertGateway } from './gateway.ts'
-import { GatewayClient } from './gateway.ts'
+import { GatewayClient, sessionAddress } from './gateway.ts'
 import { TaskRunner } from './runner.ts'
 import { adjudicate, fillResult, ledgerAvailable } from './governance.ts'
 import { recordTaskOutcome } from './memory.ts'
+import { foldGoalFromRecords } from './goals.ts'
 import { loadBoard, saveBoard, transact, createTask, updateTask, setArchived, deleteTask, genId, MAX_RUNS_PER_TASK } from './ledger.ts'
 import type { TaskRecord, RunRecord, TaskBoardStore } from './ledger.ts'
 import { collectDueTasks } from './scheduler.ts'
@@ -39,6 +40,8 @@ export interface BoardActivity {
   runningTasks: Array<{ taskId: string; title: string; sessionId?: string }>
   /** 运行中且无任务归属的会话（自由会话） */
   freeSessions: Array<{ sessionId: string; title?: string }>
+  /** 自由会话里进行中的自主目标（goal 折叠，objective 截断 40 字，封顶 3） */
+  goals: Array<{ sessionId: string; title?: string; objective: string; roundsStarted: number; maxGoalRounds: number }>
   /** 待主任审批的任务 */
   pendingApprovals: Array<{ taskId: string; title: string }>
   /** 最近完成的任务（含结果摘要，按时间倒序，封顶 5） */
@@ -57,7 +60,7 @@ export class TaskBoardService {
   private ticking = false
   private activity: BoardActivity = {
     at: new Date().toISOString(),
-    runningTasks: [], freeSessions: [], pendingApprovals: [], recentCompleted: [],
+    runningTasks: [], freeSessions: [], goals: [], pendingApprovals: [], recentCompleted: [],
   }
 
   constructor(gateway: TypertGateway, options: ServiceOptions = {}) {
@@ -121,6 +124,7 @@ export class TaskBoardService {
         }
       })
     const freeSessions: BoardActivity['freeSessions'] = []
+    const goals: BoardActivity['goals'] = []
     try {
       const res = (await this.gatewayClient.invoke('session', 'list')) as {
         items?: ReadonlyArray<{ sessionId?: string; running?: boolean; title?: string }>
@@ -131,7 +135,27 @@ export class TaskBoardService {
         freeSessions.push({ sessionId: it.sessionId, ...(it.title !== undefined && it.title !== '' ? { title: it.title } : {}) })
       }
     } catch { /* 会话维度降级：自由会话留空，任务维度照常 */ }
-    this.activity = { at, runningTasks, freeSessions, pendingApprovals, recentCompleted }
+    // L1 自主目标汇聚（拍板 2：自由会话进活动视图）：对每个自由会话折叠 goal/change，
+    // 只取进行中（active）的自主目标——objective 截断 40 字，封顶 3 条保护主任注意力。
+    // 单会话翻页失败只降级该会话。
+    for (const fs of freeSessions.slice(0, 3)) {
+      try {
+        const page = (await this.gatewayClient.invoke('session', 'page', {
+          request: { address: sessionAddress(fs.sessionId), throughSeq: 0, maxMessages: 50 },
+        })) as { records?: ReadonlyArray<{ event?: { type?: string; seq?: number; time?: number; data?: unknown } }> }
+        const goal = foldGoalFromRecords(page.records ?? [])
+        if (goal !== undefined && goal.phase === 'active') {
+          goals.push({
+            sessionId: fs.sessionId,
+            ...(fs.title !== undefined ? { title: fs.title } : {}),
+            objective: goal.objective.length > 40 ? `${goal.objective.slice(0, 40)}…` : goal.objective,
+            roundsStarted: goal.roundsStarted,
+            maxGoalRounds: goal.maxGoalRounds,
+          })
+        }
+      } catch { /* 单会话失败跳过 */ }
+    }
+    this.activity = { at, runningTasks, freeSessions, pendingApprovals, recentCompleted, goals }
   }
 
   /** 状态快照（浏览器异步视图的完整数据面）。governance.mode 供客户端渲染治理徽标。 */
@@ -201,10 +225,13 @@ export class TaskBoardService {
     try {
       // 投递重试：仅针对 launch 传输失败（会话创建/投递抛错），按线性退避
       let sessionId: string | undefined
+      let goalSeeded = false
       let lastError: unknown
       for (let attempt = 0; attempt <= this.launchRetries; attempt++) {
         try {
-          sessionId = await this.runner.launch(task, trigger)
+          const launched = await this.runner.launch(task, trigger)
+          sessionId = launched.sessionId
+          goalSeeded = launched.goalSeeded
           lastError = undefined
           break
         } catch (e) {
@@ -218,6 +245,7 @@ export class TaskBoardService {
         throw lastError instanceof Error ? lastError : new Error(String(lastError ?? '任务投递失败'))
       }
       run.sessionId = sessionId
+      run.goalSeeded = goalSeeded
     } catch (e) {
       run.status = '失败'
       run.finishedAt = new Date().toISOString()
@@ -243,8 +271,8 @@ export class TaskBoardService {
       for (const task of store.tasks) {
         const running = task.runs.filter(r => r.status === '运行中' && r.sessionId !== undefined)
         for (const run of running) {
-          const outcome = await this.runner.inspect(run.sessionId!, Date.parse(run.startedAt))
-          this.logger?.info?.(`[dsh-task-board] inspect ${run.sessionId} → ${outcome.outcome}${'error' in outcome ? ` (${outcome.error})` : ''}`)
+          const outcome = await this.runner.inspect(run.sessionId!, Date.parse(run.startedAt), { goalSeeded: run.goalSeeded === true })
+          this.logger?.info?.(`[dsh-task-board] inspect ${run.sessionId} → ${outcome.outcome}${'error' in outcome ? ` (${outcome.error})` : ''}${'goalPhase' in outcome && outcome.goalPhase !== undefined ? ` [goal:${outcome.goalPhase}]` : ''}`)
           if (outcome.outcome === 'pending') continue
           const finish: RunRecord = {
             ...run,
