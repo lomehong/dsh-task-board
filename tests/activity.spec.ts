@@ -64,7 +64,12 @@ describe('activityView（看板 = 唯一活动权威）', () => {
         }
         return { records: [] }
       },
-      stream: async () => { throw new Error('测试无事件流') },
+      // 宿主 follow 契约：首条消息为 snapshot（携带最新 cursor）——refreshActivity
+      // 据此做反向翻页（High-1 修复后语义）。
+      stream: async () => {
+        const snapshot = { type: 'snapshot', cursor: 999 }
+        return (async function* () { yield snapshot })()
+      },
     }
     const service = new TaskBoardService(gateway)
     await service.refreshActivity()

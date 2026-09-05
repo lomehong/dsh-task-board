@@ -141,14 +141,23 @@ export class TaskBoardService {
     } catch { /* 会话维度降级：自由会话留空，任务维度照常 */ }
     // L1 自主目标汇聚（拍板 2：自由会话进活动视图）：对每个自由会话折叠 goal/change，
     // 只取进行中（active）的自主目标——objective 截断 40 字，封顶 3 条保护主任注意力。
-    // 单会话翻页失败只降级该会话。
-    // L1 自主目标汇聚（拍板 2：自由会话进活动视图）：对每个自由会话折叠 goal/change，
-    // 只取进行中（active）的自主目标——objective 截断 40 字，封顶 3 条保护主任注意力。
-    // 单会话翻页失败只降级该会话。
+    // High-1 修复：必须先 follow 取快照 cursor 再以它作 throughSeq 反向翻页——
+    // throughSeq 是「截止序号」，传 0 只会拿到会话第一条事件（当初 goals 维度
+    // 静默失效的根因）。单会话失败只降级该会话。
     for (const fs of freeSessions.slice(0, 3)) {
       try {
+        let cursor: number | undefined
+        try {
+          const stream = await this.gatewayClient.stream('session', 'follow', { address: sessionAddress(fs.sessionId), maxMessages: 1 })
+          const it = (stream as AsyncIterable<unknown>)[Symbol.asyncIterator]()
+          const next = await it.next()
+          if (typeof it.return === 'function') await it.return()
+          const follow = next.done === true ? undefined : next.value as { type?: string; cursor?: number }
+          if (follow !== undefined && follow.type === 'snapshot' && typeof follow.cursor === 'number') cursor = follow.cursor
+        } catch { /* follow 失败：该会话跳过（比误报空闲更诚实） */ }
+        if (cursor === undefined) continue
         const page = (await this.gatewayClient.invoke('session', 'page', {
-          request: { address: sessionAddress(fs.sessionId), throughSeq: 0, maxMessages: 50 },
+          request: { address: sessionAddress(fs.sessionId), throughSeq: cursor, maxMessages: 200 },
         })) as { records?: ReadonlyArray<{ event?: { type?: string; seq?: number; time?: number; data?: unknown } }> }
         const goal = foldGoalFromRecords(page.records ?? [])
         if (goal !== undefined && goal.status === 'current' && goal.phase === 'active') {
