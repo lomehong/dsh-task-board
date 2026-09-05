@@ -16,6 +16,7 @@ import type { TypertGateway } from './gateway.ts'
 import { GatewayClient } from './gateway.ts'
 import { TaskRunner } from './runner.ts'
 import { adjudicate, fillResult, ledgerAvailable } from './governance.ts'
+import { recordTaskOutcome } from './memory.ts'
 import { loadBoard, saveBoard, transact, createTask, updateTask, setArchived, deleteTask, genId, MAX_RUNS_PER_TASK } from './ledger.ts'
 import type { TaskRecord, RunRecord, TaskBoardStore } from './ledger.ts'
 import { collectDueTasks } from './scheduler.ts'
@@ -188,6 +189,12 @@ export class TaskBoardService {
               : `任务 ${task.title} 执行失败：${'error' in outcome ? outcome.error : '未知原因'}`
             const filled = fillResult(run.ledgerRecordId, summary)
             if (filled.ok) this.logger?.info?.(`[dsh-task-board] 结果已回填账本（${run.ledgerRecordId}）`)
+          }
+          // 记忆沉淀（turn/end 兜底路径）：模型未调 task_report 时由宿主结算，
+          // 摘要用宿主模板句（信息量低于分身自报，但保证"经验积累"不缺页）。
+          if (outcome.outcome === 'succeeded' || outcome.outcome === 'failed') {
+            const fallbackSummary = 'error' in outcome && outcome.error !== undefined ? outcome.error : `会话执行${finish.status}`
+            void recordTaskOutcome({ id: task.id, title: task.title }, finish.status === '成功' ? '成功' : '失败', fallbackSummary)
           }
         }
       }

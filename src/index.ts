@@ -16,6 +16,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createService } from './service.ts'
 import { injectLedgerGetter, injectNotifier, type LedgerModule } from './governance.ts'
+import { injectMemoryGetter, type TaskMemoryModule } from './memory.ts'
 import type { TypertGateway } from './gateway.ts'
 
 interface RequestLike {
@@ -96,6 +97,17 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
   injectLedgerGetter(() => {
     try {
       return (ctx as unknown as { get(name: string): unknown }).get('dsh-ledger') as LedgerModule | undefined
+    } catch {
+      return undefined
+    }
+  })
+
+  // 记忆惰性解析（可选增强，宪章 §3.2）：任务落定时把结果沉淀进 dsh-memory
+  // 共享记忆（「已验证结果」），主任问「最近完成了哪些工作」即可被检索。
+  // 缺席/失败由 memory.ts 显式降级（WARN 一次），不影响看板终态。
+  injectMemoryGetter(() => {
+    try {
+      return (ctx as unknown as { get(name: string): unknown }).get('dsh-memory') as TaskMemoryModule | undefined
     } catch {
       return undefined
     }

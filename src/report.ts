@@ -11,6 +11,7 @@
  */
 import { transact, loadBoard, type TaskRecord, type RunRecord } from './ledger.ts'
 import { fillResult } from './governance.ts'
+import { recordTaskOutcome } from './memory.ts'
 
 /** 上报状态：任务级二元终态（部分完成以 summary 说明，状态按实际达成填）。 */
 export type ReportStatus = '成功' | '失败'
@@ -90,5 +91,11 @@ export function reportTaskResult(taskId: string, input: ReportInput): ReportOutc
       // 回填失败不影响看板终态；留痕缺口在下次审计可见
     }
   }
+
+  // 记忆沉淀（决策五「记忆是经验积累」）：分身亲报的结果写入共享记忆，
+  // 主任以后问「最近完成了哪些工作」即可被 tool-memory / 按回合装配检索到。
+  // fire-and-forget：写入失败不影响看板终态（memory.ts 内部已兜底）。
+  void recordTaskOutcome({ id: taskId, title: updated.title }, input.status, trimmed)
+
   return { ok: true, task: updated, run: settled }
 }
