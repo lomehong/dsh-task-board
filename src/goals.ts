@@ -17,15 +17,6 @@ export interface GoalEventRecord {
   event?: { type?: string; seq?: number; time?: number; data?: unknown }
 }
 
-/** 折叠后的 goal 状态（显示与结算所需的最小投影）。 */
-export interface GoalFolded {
-  phase: 'active' | 'paused' | 'blocked' | 'complete'
-  objective: string
-  roundsStarted: number
-  maxGoalRounds: number
-  blockedMessage?: string
-}
-
 /** 执行会话的 goal 轮次预算（按动作级别；L0 单轮即可，L3 走不到这里）。 */
 export const GOAL_ROUNDS_BY_LEVEL: Record<'L0' | 'L1' | 'L2' | 'L3', number | undefined> = {
   L0: undefined,
@@ -43,35 +34,52 @@ export function goalCreateSpec(sessionId: string, objective: string, maxGoalRoun
   return { namespace: 'goals', method: 'create', args: { agentId: sessionId, request: { objective, maxGoalRounds } } }
 }
 
+/** 折叠结果：current=存在当前 goal；cleared=goal 已被显式清除（墓碑）。undefined=窗口内无任何 goal 事件。 */
+export type GoalFoldResult =
+  | {
+      status: 'current'
+      phase: 'active' | 'paused' | 'blocked' | 'complete'
+      objective: string
+      roundsStarted: number
+      maxGoalRounds: number
+      blockedMessage?: string
+    }
+  | { status: 'cleared' }
+
 /**
- * 从会话事件页折叠当前 goal 状态：取最后一条 `goal/change`（change 携带变更后
- * 完整状态，last-wins 即当前态）。无 goal 事件 → undefined。
+ * 从会话事件页折叠当前 goal 状态（数组序 last-wins，宿主单页按 seq 升序返回）。
+ *
+ * 关键语义（并发审查 High-2）：`operation === 'clear'` 的事件是**无 goal 字段的
+ * 墓碑**——显式折叠为 cleared，绝不残留上一条快照的旧相位（否则主人清除 goal 后
+ * 看板仍按 active 判"继续等"，任务永久进行中）。
  */
 export function foldGoalFromRecords(
   records: ReadonlyArray<GoalEventRecord>,
-): GoalFolded | undefined {
-  let folded: GoalFolded | undefined
-  let bestSeq = -1
+): GoalFoldResult | undefined {
+  let folded: GoalFoldResult | undefined = undefined
   for (const r of records) {
     const ev = r?.event
     if (ev === undefined || ev.type !== 'goal/change') continue
     const data = ev.data as {
+      operation?: string
       goal?: { phase?: string; objective?: string; maxGoalRounds?: number; blockedReason?: { message?: string } }
       roundsStarted?: number
     } | undefined
-    const phase = data?.goal?.phase
-    const objective = data?.goal?.objective
+    // clear 墓碑（High-2）：无 goal 字段——显式折叠为「已清除」
+    if (data === undefined || data.operation === 'clear' || data.goal === undefined) {
+      folded = { status: 'cleared' }
+      continue
+    }
+    const phase = data.goal.phase
     if (phase !== 'active' && phase !== 'paused' && phase !== 'blocked' && phase !== 'complete') continue
-    if (typeof objective !== 'string' || objective === '') continue
-    const seq = typeof ev.seq === 'number' ? ev.seq : 0
-    if (seq < bestSeq) continue
-    bestSeq = seq
+    if (typeof data.goal.objective !== 'string' || data.goal.objective === '') continue
     folded = {
+      status: 'current',
       phase,
-      objective,
-      roundsStarted: typeof data?.roundsStarted === 'number' ? data.roundsStarted : 0,
-      maxGoalRounds: typeof data?.goal?.maxGoalRounds === 'number' ? data.goal.maxGoalRounds : 0,
-      ...(data?.goal?.blockedReason?.message !== undefined ? { blockedMessage: data.goal.blockedReason.message } : {}),
+      objective: data.goal.objective,
+      roundsStarted: typeof data.roundsStarted === 'number' ? data.roundsStarted : 0,
+      maxGoalRounds: typeof data.goal.maxGoalRounds === 'number' ? data.goal.maxGoalRounds : 0,
+      ...(data.goal.blockedReason?.message !== undefined ? { blockedMessage: data.goal.blockedReason.message } : {}),
     }
   }
   return folded

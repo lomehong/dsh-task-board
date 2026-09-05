@@ -122,15 +122,39 @@ describe('task_delegate（对话内下单）', () => {
     const registered = await registerTools()
     const delegate = registered.get('task_delegate')
     expect(delegate).toBeDefined()
+    const exec = { agent: { id: 'session-test-1' } }
     const out = (await delegate!.execute({
       title: '整理周报', prompt: '把本周记忆整理成周报', action_type: '整理汇报', target_scope: '本机',
       action_level: 'L1', run_now: true,
-    })) as { ok: boolean; task_id: string; run_status: string }
+    }, exec)) as { ok: boolean; task_id: string; action_level: string; run_status: string }
     expect(out.ok).toBe(true)
     expect(out.task_id).toBe('TB-1')
     expect(out.run_status).toBe('运行中')
     expect(created[0].actionLevel).toBe('L1')
     expect(runs).toEqual(['TB-1'])
+  })
+
+  it('外发/破坏性动词强制提升级别（安全审计 H1）', async () => {
+    const created: Array<Record<string, unknown>> = []
+    injectServiceGetter(() => ({
+      createWithGovernance: async (input: Record<string, unknown>) => { created.push(input); return { id: 'TB-x', title: input.title as string } },
+      run: async () => ({ status: '运行中' }),
+    }) as never)
+    const registered = await registerTools()
+    const delegate = registered.get('task_delegate')!
+    const exec = { agent: { id: 'session-test-1' } }
+    const out1 = (await delegate.execute({
+      title: '发布公告', prompt: '向全员群发通知', action_type: '答疑', target_scope: '外部',
+      action_level: 'L0', run_now: false,
+    }, exec)) as { action_level: string }
+    expect(out1.action_level).toBe('L2') // 外发动词：L0 申报强制升 L2
+    const out2 = (await delegate.execute({
+      title: '清理数据', prompt: '删除全部旧记录', action_type: '答疑', target_scope: '外部',
+      action_level: 'L0', run_now: false,
+    }, exec)) as { action_level: string }
+    expect(out2.action_level).toBe('L3') // 破坏性动词：强制 L3
+    expect(created[0].actionLevel).toBe('L2') // out1 外发动词升 L2
+    expect(created[1].actionLevel).toBe('L3') // out2 破坏性动词升 L3
   })
 
   it('cron 任务默认不立即执行', async () => {
@@ -143,17 +167,20 @@ describe('task_delegate（对话内下单）', () => {
     const out = (await registered.get('task_delegate')!.execute({
       title: '每天晨报', prompt: '生成晨报', action_type: '整理汇报', target_scope: '本机',
       action_level: 'L0', cron: '0 8 * * *', run_now: false,
-    })) as { ok: boolean; run_status: string }
+    }, { agent: { id: 'session-test-1' } })) as { ok: boolean; run_status: string }
     expect(out.ok).toBe(true)
     expect(out.run_status).toBe('未执行（run_now=false）')
     expect(runs).toEqual([])
   })
 
-  it('看板服务缺席：执行抛错（fail-closed，不静默假装立项）', async () => {
+  it('缺调用方身份/看板服务缺席：执行抛错（fail-closed，不静默假装立项）', async () => {
     injectServiceGetter(undefined)
     const registered = await registerTools()
     await expect(registered.get('task_delegate')!.execute({
       title: 'x', prompt: 'y', action_type: '答疑', target_scope: '本机', action_level: 'L0',
-    })).rejects.toThrow('看板服务不可用')
+    })).rejects.toThrow('必须在 agent 会话内调用')
+    await expect(registered.get('task_delegate')!.execute({
+      title: 'x', prompt: 'y', action_type: '答疑', target_scope: '本机', action_level: 'L0',
+    }, { agent: { id: 'session-test-1' } })).rejects.toThrow('看板服务不可用')
   })
 })

@@ -293,7 +293,7 @@ describe('service：执行状态机', () => {
     expect(fake.check).toHaveBeenCalled() // 创建时立即裁决（与决策二「从出生就在治理框架内」对齐）
   })
 
-  it('L1 任务创建时**不**触发裁决——L0/L1 默认放行，裁决成本应只在高风险动作上', async () => {
+  it('L1 任务创建也触发裁决并落账本记录（安全审计 H1：全级别审计，防降级申报绕过治理）', async () => {
     const fake: LedgerModule = {
       check: vi.fn(() => ({ record: { id: 'R1', status: '已放行' }, judgment: { decision: '放行', level: 'L1' } })),
       fillResult: () => ({ ok: true }),
@@ -301,7 +301,7 @@ describe('service：执行状态机', () => {
     injectLedgerGetter(() => fake)
     const svc = createService(buildGateway({ presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }))
     await svc.create({ title: '低风险', prompt: 'p', actionType: '整理', targetScope: '记忆库', actionLevel: 'L1' })
-    expect(fake.check).not.toHaveBeenCalled()
+    expect(fake.check).toHaveBeenCalledTimes(1)
   })
 })
 

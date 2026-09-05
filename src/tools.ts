@@ -150,18 +150,29 @@ export function apply(ctx: Context): void {
           return [{ type: 'text', text: `已立项 ${v.task_id}（${v.run_status}）。主任可在任务看板查看进展。` }]
         },
       },
-      execute: async (args) => {
+      execute: async (args, exec) => {
         const a = (args ?? {}) as Record<string, unknown>
         const title = typeof a.title === 'string' ? a.title.trim() : ''
         const prompt = typeof a.prompt === 'string' ? a.prompt.trim() : ''
         const actionType = typeof a.action_type === 'string' ? a.action_type.trim() : ''
         const targetScope = typeof a.target_scope === 'string' ? a.target_scope.trim() : ''
-        const level = a.action_level
+        const declared = a.action_level
         if (title === '') throw new Error('title 必填')
         if (prompt === '') throw new Error('prompt 必填（执行会话依赖它独立完成工作）')
         if (actionType === '') throw new Error('action_type 必填（账本分级依据）')
         if (targetScope === '') throw new Error('target_scope 必填（账本分级依据）')
-        if (level !== 'L0' && level !== 'L1' && level !== 'L2' && level !== 'L3') throw new Error('action_level 必须是 L0/L1/L2/L3')
+        if (declared !== 'L0' && declared !== 'L1' && declared !== 'L2' && declared !== 'L3') throw new Error('action_level 必须是 L0/L1/L2/L3')
+        // 安全审计 H1 加固：外发/破坏性动词强制提升级别——防"降级申报绕过审批"
+        const surface = `${title}\n${prompt}`
+        let level: 'L0' | 'L1' | 'L2' | 'L3' = declared
+        if (/(转账|付款|支付|删除|清空)/.test(surface)) {
+          level = 'L3'
+        } else if (/(发送|发布|对外|提交|上传|群发|回复)/.test(surface) && (level === 'L0' || level === 'L1')) {
+          level = 'L2'
+        }
+        // 调用方身份：必须在真实 agent 会话内调用（exec 由宿主注入，模型不可伪造）
+        const caller = String((exec as { agent?: { id?: unknown } } | undefined)?.agent?.id ?? '')
+        if (caller === '') throw new Error('task_delegate 必须在 agent 会话内调用（缺调用方身份）')
         const cron = typeof a.cron === 'string' && a.cron.trim() !== '' ? a.cron.trim() : undefined
         const runNow = a.run_now !== false
         const svc = serviceGetter?.()
@@ -181,7 +192,7 @@ export function apply(ctx: Context): void {
             runStatus = '启动失败：' + (e instanceof Error ? e.message : String(e))
           }
         }
-        return { ok: true, task_id: t.id, run_status: runStatus }
+        return { ok: true, task_id: t.id, action_level: level, run_status: runStatus }
       },
     })
   } catch (e) {

@@ -41,7 +41,6 @@ export declare class TaskRunner {
     /** 执行预设 id；缺省 digital-twin（决策五：分身是唯一执行身份） */
     private readonly presetId;
     private readonly gateway;
-    private readonly scanMemos;
     constructor(gateway: GatewayClient | TypertGateway, 
     /** 执行预设 id；缺省 digital-twin（决策五：分身是唯一执行身份） */
     presetId?: string);

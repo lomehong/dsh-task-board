@@ -20,14 +20,6 @@ export interface GoalEventRecord {
         data?: unknown;
     };
 }
-/** 折叠后的 goal 状态（显示与结算所需的最小投影）。 */
-export interface GoalFolded {
-    phase: 'active' | 'paused' | 'blocked' | 'complete';
-    objective: string;
-    roundsStarted: number;
-    maxGoalRounds: number;
-    blockedMessage?: string;
-}
 /** 执行会话的 goal 轮次预算（按动作级别；L0 单轮即可，L3 走不到这里）。 */
 export declare const GOAL_ROUNDS_BY_LEVEL: Record<'L0' | 'L1' | 'L2' | 'L3', number | undefined>;
 /** goals/create 的远程调用规格（agentId = 执行会话 id）。 */
@@ -42,8 +34,22 @@ export declare function goalCreateSpec(sessionId: string, objective: string, max
         };
     };
 };
+/** 折叠结果：current=存在当前 goal；cleared=goal 已被显式清除（墓碑）。undefined=窗口内无任何 goal 事件。 */
+export type GoalFoldResult = {
+    status: 'current';
+    phase: 'active' | 'paused' | 'blocked' | 'complete';
+    objective: string;
+    roundsStarted: number;
+    maxGoalRounds: number;
+    blockedMessage?: string;
+} | {
+    status: 'cleared';
+};
 /**
- * 从会话事件页折叠当前 goal 状态：取最后一条 `goal/change`（change 携带变更后
- * 完整状态，last-wins 即当前态）。无 goal 事件 → undefined。
+ * 从会话事件页折叠当前 goal 状态（数组序 last-wins，宿主单页按 seq 升序返回）。
+ *
+ * 关键语义（并发审查 High-2）：`operation === 'clear'` 的事件是**无 goal 字段的
+ * 墓碑**——显式折叠为 cleared，绝不残留上一条快照的旧相位（否则主人清除 goal 后
+ * 看板仍按 active 判"继续等"，任务永久进行中）。
  */
-export declare function foldGoalFromRecords(records: ReadonlyArray<GoalEventRecord>): GoalFolded | undefined;
+export declare function foldGoalFromRecords(records: ReadonlyArray<GoalEventRecord>): GoalFoldResult | undefined;

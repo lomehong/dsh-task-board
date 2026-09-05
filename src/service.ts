@@ -31,6 +31,8 @@ export interface ServiceOptions {
   launchRetries?: number
   /** 重试间隔基数毫秒（缺省 500ms，按次数线性退避） */
   retryBackoffMs?: number
+  /** 滞留兜底阈值毫秒（缺省 6 小时）：运行中 run 超过该时长强制取消（High-2 防永久 pending） */
+  stuckRunTimeoutMs?: number
 }
 
 /** 活动视图（主任拍板：看板 = 唯一活动权威）。dsh-twin 活动区段按此结构消费。 */
@@ -57,6 +59,7 @@ export class TaskBoardService {
   private readonly defaultWorkspaceId: string | undefined
   private readonly launchRetries: number
   private readonly retryBackoffMs: number
+  private readonly stuckRunTimeoutMs: number
   private ticking = false
   private activity: BoardActivity = {
     at: new Date().toISOString(),
@@ -70,6 +73,7 @@ export class TaskBoardService {
     this.defaultWorkspaceId = options.defaultWorkspaceId !== undefined ? options.defaultWorkspaceId : undefined
     this.launchRetries = Math.max(0, options.launchRetries ?? 0)
     this.retryBackoffMs = Math.max(0, options.retryBackoffMs ?? 500)
+    this.stuckRunTimeoutMs = Math.max(60_000, options.stuckRunTimeoutMs ?? 21_600_000)
   }
 
   /** 宿主接线后启动 tick 循环；返回停止函数。 */
@@ -138,13 +142,16 @@ export class TaskBoardService {
     // L1 自主目标汇聚（拍板 2：自由会话进活动视图）：对每个自由会话折叠 goal/change，
     // 只取进行中（active）的自主目标——objective 截断 40 字，封顶 3 条保护主任注意力。
     // 单会话翻页失败只降级该会话。
+    // L1 自主目标汇聚（拍板 2：自由会话进活动视图）：对每个自由会话折叠 goal/change，
+    // 只取进行中（active）的自主目标——objective 截断 40 字，封顶 3 条保护主任注意力。
+    // 单会话翻页失败只降级该会话。
     for (const fs of freeSessions.slice(0, 3)) {
       try {
         const page = (await this.gatewayClient.invoke('session', 'page', {
           request: { address: sessionAddress(fs.sessionId), throughSeq: 0, maxMessages: 50 },
         })) as { records?: ReadonlyArray<{ event?: { type?: string; seq?: number; time?: number; data?: unknown } }> }
         const goal = foldGoalFromRecords(page.records ?? [])
-        if (goal !== undefined && goal.phase === 'active') {
+        if (goal !== undefined && goal.status === 'current' && goal.phase === 'active') {
           goals.push({
             sessionId: fs.sessionId,
             ...(fs.title !== undefined ? { title: fs.title } : {}),
@@ -170,12 +177,20 @@ export class TaskBoardService {
 
   private lastTickAt?: string
 
-  /** 创建任务并按声明的动作级别做**预裁决**：L2 及以上立即产生审批令牌（不等首次执行）。账本缺席时不预裁决——由本地降级策略在执行时处理。 */
+  /** 创建任务并按声明的动作级别做**预裁决**（安全审计 H1：所有级别一律落账本
+   *  记录 + prompt 纳入 digest 审计——防"降级申报绕过治理"；L2 及以上立即产生
+   *  审批令牌。账本缺席时不预裁决——由本地降级策略在执行时处理）。 */
   async createWithGovernance(input: Parameters<typeof createTask>[0]): Promise<TaskRecord> {
     const task = createTask(input)
-    if (ledgerAvailable() && (task.actionLevel === 'L2' || task.actionLevel === 'L3')) {
+    if (ledgerAvailable()) {
       try {
-        await adjudicate({ taskId: task.id, actionType: task.actionType, targetScope: task.targetScope, actionLevel: task.actionLevel })
+        await adjudicate({
+          taskId: task.id,
+          actionType: task.actionType,
+          targetScope: task.targetScope,
+          actionLevel: task.actionLevel,
+          digest: `委托立项：${task.title}——${String(task.prompt).slice(0, 80)}`,
+        })
       } catch { /* 账本瞬态错误延迟到执行时暴露 */ }
     }
     return task
@@ -256,7 +271,8 @@ export class TaskBoardService {
     return run
   }
 
-  /** tick：调度触发 + 运行中执行的结果判定。 */
+  /** tick：调度触发 + 运行中执行的结果判定。整体兜底 catch——任何单次失败
+   *  （fs 抖动/网关挂起降级）都不允许以 unhandledRejection 击穿宿主进程（SRE H1）。 */
   async tick(): Promise<void> {
     if (this.ticking) return
     this.ticking = true
@@ -266,6 +282,35 @@ export class TaskBoardService {
       for (const task of collectDueTasks(new Date())) {
         await this.run(task.id, '定时').catch(() => { /* 单任务失败不影响其余 */ })
       }
+      // b0) 滞留兜底（High-2）：运行中 run 超过阈值强制取消——宿主重启 disarmed、
+      //  goal 被清除等场景下 goal 相位残留 active 会导致"永久进行中"，这里兜底收敛。
+      const stuckCutoff = Date.now() - this.stuckRunTimeoutMs
+      const stuckList: Array<{ taskId: string; run: RunRecord; sessionId: string }> = []
+      for (const task of loadBoard().tasks) {
+        for (const run of task.runs) {
+          if (run.status === '运行中' && Date.parse(run.startedAt) < stuckCutoff) {
+            stuckList.push({ taskId: task.id, run, sessionId: run.sessionId ?? '' })
+          }
+        }
+      }
+      for (const s of stuckList) {
+        const finished: RunRecord = {
+          ...s.run,
+          status: '已取消',
+          finishedAt: new Date().toISOString(),
+          summary: `执行疑似滞留（超过 ${Math.round(this.stuckRunTimeoutMs / 3_600_000)} 小时无终态），看板强制取消；如仍需要请重新执行`,
+        }
+        transact((s2) => {
+          const t = s2.tasks.find(x => x.id === s.taskId)
+          if (t === undefined) return
+          const idx = t.runs.findIndex(r => r.id === s.run.id)
+          if (idx >= 0 && t.runs[idx]?.status === '运行中') t.runs[idx] = finished
+          t.lastStatus = '已取消'
+          if (finished.finishedAt !== undefined) t.lastRunAt = finished.finishedAt
+        })
+        this.logger?.warn?.(`[dsh-task-board] 滞留执行已强制取消：${s.taskId}（会话 ${s.sessionId}）`)
+      }
+
       // b) 运行中的执行做结果判定
       const store = loadBoard()
       for (const task of store.tasks) {
@@ -284,7 +329,11 @@ export class TaskBoardService {
             const t = s2.tasks.find(x => x.id === task.id)
             if (t === undefined) return
             const idx = t.runs.findIndex(r => r.id === run.id)
-            if (idx >= 0) t.runs[idx] = finish
+            if (idx < 0) return
+            // Medium-1 覆盖竞态防护：inspect 的异步间隙里 task_report 可能已落终态——
+            // 只覆盖仍为「运行中」的记录，绝不翻转已落定的结果。
+            if (t.runs[idx]?.status !== '运行中') return
+            t.runs[idx] = finish
             t.lastStatus = finish.status
             if (finish.finishedAt !== undefined) t.lastRunAt = finish.finishedAt
             t.column = finish.status === '成功' ? '已完成' : '已失败'
@@ -306,6 +355,8 @@ export class TaskBoardService {
       }
       // c) 活动视图刷新（看板 = 唯一活动权威；会话维度失败自行降级）
       await this.refreshActivity()
+    } catch (e) {
+      this.logger?.warn?.(`[dsh-task-board] tick 异常（下一轮自动重试）: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       this.ticking = false
     }

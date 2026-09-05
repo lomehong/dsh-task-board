@@ -24,6 +24,8 @@ export interface ServiceOptions {
     launchRetries?: number;
     /** 重试间隔基数毫秒（缺省 500ms，按次数线性退避） */
     retryBackoffMs?: number;
+    /** 滞留兜底阈值毫秒（缺省 6 小时）：运行中 run 超过该时长强制取消（High-2 防永久 pending） */
+    stuckRunTimeoutMs?: number;
 }
 /** 活动视图（主任拍板：看板 = 唯一活动权威）。dsh-twin 活动区段按此结构消费。 */
 export interface BoardActivity {
@@ -73,6 +75,7 @@ export declare class TaskBoardService {
     private readonly defaultWorkspaceId;
     private readonly launchRetries;
     private readonly retryBackoffMs;
+    private readonly stuckRunTimeoutMs;
     private ticking;
     private activity;
     constructor(gateway: TypertGateway, options?: ServiceOptions);
@@ -100,11 +103,14 @@ export declare class TaskBoardService {
         };
     };
     private lastTickAt?;
-    /** 创建任务并按声明的动作级别做**预裁决**：L2 及以上立即产生审批令牌（不等首次执行）。账本缺席时不预裁决——由本地降级策略在执行时处理。 */
+    /** 创建任务并按声明的动作级别做**预裁决**（安全审计 H1：所有级别一律落账本
+     *  记录 + prompt 纳入 digest 审计——防"降级申报绕过治理"；L2 及以上立即产生
+     *  审批令牌。账本缺席时不预裁决——由本地降级策略在执行时处理）。 */
     createWithGovernance(input: Parameters<typeof createTask>[0]): Promise<TaskRecord>;
     /** 执行任务：账本裁决 → 放行则投递分身会话。返回执行记录（含审批令牌时为待审批）。 */
     run(taskId: string, trigger: '手动' | '定时'): Promise<RunRecord>;
-    /** tick：调度触发 + 运行中执行的结果判定。 */
+    /** tick：调度触发 + 运行中执行的结果判定。整体兜底 catch——任何单次失败
+     *  （fs 抖动/网关挂起降级）都不允许以 unhandledRejection 击穿宿主进程（SRE H1）。 */
     tick(): Promise<void>;
     private taskOf;
     private recordRun;

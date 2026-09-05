@@ -39,7 +39,6 @@ export class LaunchError extends Error {
 
 export class TaskRunner {
   private readonly gateway: GatewayClient
-  private readonly scanMemos = new Map<string, number>()
 
   constructor(
     gateway: GatewayClient | TypertGateway,
@@ -116,7 +115,6 @@ export class TaskRunner {
     const summary = items.find(item => item.sessionId === sessionId)
     if (summary === undefined) {
       console.error(`[dsh-task-board][inspect] session ${sessionId} not in list (${items.length} sessions) → cancelled`)
-      this.scanMemos.delete(sessionId)
       return { outcome: 'cancelled', error: '执行会话已不存在' }
     }
     if (summary.running === true) return { outcome: 'pending' }
@@ -160,19 +158,31 @@ export class TaskRunner {
     // goal 相位结算梯子（L2 播种后启用）：turn/end ≠ 完成判断，goal 终相才是。
     if (opts.goalSeeded === true) {
       const goal = foldGoalFromRecords(page.records)
-      if (goal !== undefined) {
+      if (goal !== undefined && goal.status === 'current') {
         if (goal.phase === 'active') return { outcome: 'pending' }
         if (goal.phase === 'complete') return { outcome: 'succeeded', goalPhase: 'complete' }
         if (goal.phase === 'blocked') {
           return { outcome: 'failed', error: goal.blockedMessage ?? '自主目标受阻', goalPhase: 'blocked' }
         }
         // paused：人为暂停不再续跑 → 按 turn/end 结果结算（legacy 语义）
+      } else if (goal === undefined) {
+        // High-3：goal/change 滚出消息窗（fold 缺席 ≠ 无 goal）——拒绝 legacy 提前
+        // 结算，返回 pending 等下一轮窗口；长期滞留由 tick 的 stuck 兜底强制取消。
+        return { outcome: 'pending' }
       }
+      // cleared：goal 脚手架已被移除 → 按 turn/end 结果结算（legacy 语义）
     }
 
     const data = turnEnd.data as { reason?: { kind?: string } } | null
-    if (data !== null && typeof data === 'object' && typeof data.reason === 'object' && data.reason !== null && data.reason.kind === 'error') {
-      return { outcome: 'failed', error: '分身执行轮次以错误结束' }
+    const reasonKind = data !== null && typeof data === 'object' && typeof data.reason === 'object' && data.reason !== null ? String(data.reason.kind ?? '') : ''
+    // Medium-2 reason 白名单：宿主 turn/end 的 reason.kind 远不止 error/completed
+    // （aborted/interrupted/max-tokens/blocked…）——一律记"成功"会把主人中止、
+    // 截断都洗成"已验证结果：成功"。
+    if (reasonKind === 'aborted' || reasonKind === 'interrupted') {
+      return { outcome: 'cancelled', error: `执行被中止/打断（${reasonKind}）` }
+    }
+    if (reasonKind === 'error' || reasonKind === 'blocked' || reasonKind === 'max-tokens') {
+      return { outcome: 'failed', error: `分身执行轮次异常结束（${reasonKind}）` }
     }
     return { outcome: 'succeeded' }
   }
