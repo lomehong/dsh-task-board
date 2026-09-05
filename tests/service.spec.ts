@@ -159,22 +159,23 @@ describe('治理：账本在场完整裁决 / 缺席本地降级（宪章 §3.5�
     expect(v.reason).toMatch(/无账本治理|拒绝/)
   })
 
-  it('账本缺席本地降级：L2 放行并尽力通知主任（notifier 被调用）', async () => {
+  it('账本缺席本地降级：L2 拦截并尽力通知主任（不扩权，宪章 §3.2）', async () => {
     const calls: Array<{ title: string; message: string }> = []
     injectNotifier(() => (input) => { calls.push(input); return true })
     const { adjudicate } = await import('../src/governance.ts')
     const v = adjudicate({ taskId: 'X', actionType: '对外承诺', targetScope: '外部', actionLevel: 'L2' })
-    expect(v.allowed).toBe(true)
+    expect(v.allowed).toBe(false)
     expect(v.mode).toBe('本地')
+    expect(v.reason).toMatch(/不扩权|需要审批/)
     await vi.waitFor(() => { expect(calls).toHaveLength(1) })
     expect(calls[0]?.message).toContain('X')
   })
 
-  it('通知器缺席时 L2 仍放行（通知是缓解措施，不是闸门）', async () => {
+  it('通知器缺席时 L2 仍被拦截（通知是缓解措施，不是闸门）', async () => {
     injectNotifier(() => undefined)
     const { adjudicate } = await import('../src/governance.ts')
     const v = adjudicate({ taskId: 'X', actionType: '对外承诺', targetScope: '外部', actionLevel: 'L2' })
-    expect(v.allowed).toBe(true)
+    expect(v.allowed).toBe(false)
   })
 
   it('注入账本后 adjudicate 返回 GovernanceVerdict', async () => {
@@ -300,5 +301,25 @@ describe('service：执行状态机', () => {
     const svc = createService(buildGateway({ presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }))
     await svc.create({ title: '低风险', prompt: 'p', actionType: '整理', targetScope: '记忆库', actionLevel: 'L1' })
     expect(fake.check).not.toHaveBeenCalled()
+  })
+})
+
+describe('reportTaskResult：会话绑定防伪造（宪章 F-03）', () => {
+  it('上报会话与执行会话一致时落终态；不一致时拒绝', async () => {
+    // 直接用 report.ts + ledger.ts 组合：先造一个运行中执行
+    const { createTask, transact, loadBoard } = await import('../src/ledger.ts')
+    const { reportTaskResult } = await import('../src/report.ts')
+    const t = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b', actionLevel: 'L1' })
+    transact((store) => {
+      const task = store.tasks.find(x => x.id === t.id)!
+      task.runs.push({ id: 'RUN-1', startedAt: new Date().toISOString(), status: '运行中', trigger: '手动', sessionId: 'S-exec' })
+      task.column = '进行中'
+    })
+    const bad = reportTaskResult(t.id, { status: '成功', summary: '伪造摘要', sessionId: 'S-other' })
+    expect(bad.ok).toBe(false)
+    expect(bad.error).toMatch(/不一致/)
+    const good = reportTaskResult(t.id, { status: '成功', summary: '真实摘要', sessionId: 'S-exec' })
+    expect(good.ok).toBe(true)
+    expect(loadBoard().tasks.find(x => x.id === t.id)?.column).toBe('已完成')
   })
 })

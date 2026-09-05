@@ -116,17 +116,18 @@ function adjudicateLocal(input: AdjudicateInput): GovernanceVerdict {
     }
   }
   if (input.actionLevel === 'L2') {
+    // 宪章 §3.2：治理缺席不得扩大权限面。L2 有账本时需审批，缺席同样不放行——
+    // 尽力通知主任（降级可感知），任务保留待办列，装回账本后即可走审批流。
     const notify = notifierGetter?.()
     if (notify !== undefined) {
-      // 尽力通知，失败不阻断（宪章 §3.2：通知是缓解措施，不是闸门）
       void Promise.resolve(notify({
         title: '任务看板 · 无账本治理',
-        message: `任务 ${input.taskId}（${input.actionType} → ${input.targetScope}）为 L2 动作，账本缺席降级运行：未经审批直接执行。`,
+        message: `任务 ${input.taskId}（${input.actionType} → ${input.targetScope}）为 L2 动作，账本缺席已被拦截：未经审批不执行。`,
       })).catch(() => {})
     }
     return {
-      allowed: true, decision: '放行', level: 'L2', mode: '本地',
-      reason: '无账本治理：L2 动作未经审批直接执行（降级运行）',
+      allowed: false, decision: '已拒绝', level: 'L2', mode: '本地',
+      reason: '无账本治理：L2 动作需要审批，已被拦截（宪章 §3.2 不扩权）——安装 @dsh-extra/dsh-ledger 后可走审批流',
     }
   }
   return {

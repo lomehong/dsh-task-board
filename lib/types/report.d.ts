@@ -15,6 +15,8 @@ export type ReportStatus = '成功' | '失败';
 export interface ReportInput {
     status: ReportStatus;
     summary: string;
+    /** 调用方会话 id（防伪造：必须与任务运行记录的执行会话一致） */
+    sessionId: string;
 }
 export interface ReportOutcome {
     ok: boolean;
@@ -27,7 +29,7 @@ export interface ReportOutcome {
  * 账本记录在位时同步回填模型真实摘要（替代宿主模板句）。
  *
  * @param taskId - 看板任务 id（投递提示词中携带）。
- * @param input - status + summary。
- * @returns 上报结果；任务不存在或无进行中执行时 ok=false。
+ * @param input - status + summary + 调用方会话 id。
+ * @returns 上报结果；任务不存在、无进行中执行或会话与执行会话不一致时 ok=false。
  */
 export declare function reportTaskResult(taskId: string, input: ReportInput): ReportOutcome;

@@ -30,7 +30,7 @@ interface ToolRegistration {
   description: string
   parameters: JsonSchemaLike
   output: ToolOutputLike
-  execute: (args: unknown) => Promise<unknown>
+  execute: (args: unknown, exec: unknown) => Promise<unknown>
 }
 
 interface ToolsLike {
@@ -75,12 +75,14 @@ export function apply(ctx: Context): void {
           return [{ type: 'text', text: '结果已上报任务看板，主任可在看板中查看。' }]
         },
       },
-      execute: async (args) => {
+      execute: async (args, exec) => {
         const a = (args ?? {}) as { task_id?: string; status?: string; summary?: string }
         if (typeof a.task_id !== 'string' || a.task_id === '') throw new Error('task_id 必填')
         if (a.status !== '成功' && a.status !== '失败') throw new Error('status 必须是 成功 或 失败')
         if (typeof a.summary !== 'string' || a.summary.trim() === '') throw new Error('summary 必填')
-        const outcome = reportTaskResult(a.task_id, { status: a.status as ReportStatus, summary: a.summary })
+        // F-03 防伪造：以当前执行会话 id 与运行记录比对（exec 由宿主注入，不可伪造）
+        const sessionId = String((exec as { agent?: { id?: unknown } } | undefined)?.agent?.id ?? '')
+        const outcome = reportTaskResult(a.task_id, { status: a.status as ReportStatus, summary: a.summary, sessionId })
         if (!outcome.ok) throw new Error(outcome.error ?? '上报失败')
         return { ok: true }
       },

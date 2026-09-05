@@ -18,6 +18,8 @@ export type ReportStatus = '成功' | '失败'
 export interface ReportInput {
   status: ReportStatus
   summary: string
+  /** 调用方会话 id（防伪造：必须与任务运行记录的执行会话一致） */
+  sessionId: string
 }
 
 export interface ReportOutcome {
@@ -32,8 +34,8 @@ export interface ReportOutcome {
  * 账本记录在位时同步回填模型真实摘要（替代宿主模板句）。
  *
  * @param taskId - 看板任务 id（投递提示词中携带）。
- * @param input - status + summary。
- * @returns 上报结果；任务不存在或无进行中执行时 ok=false。
+ * @param input - status + summary + 调用方会话 id。
+ * @returns 上报结果；任务不存在、无进行中执行或会话与执行会话不一致时 ok=false。
  */
 export function reportTaskResult(taskId: string, input: ReportInput): ReportOutcome {
   if (input.status !== '成功' && input.status !== '失败') {
@@ -41,6 +43,7 @@ export function reportTaskResult(taskId: string, input: ReportInput): ReportOutc
   }
   const trimmed = input.summary.trim()
   if (trimmed === '') return { ok: false, error: 'summary 必填（给主任看的结果摘要）' }
+  if (input.sessionId.trim() === '') return { ok: false, error: 'sessionId 必填（防伪造：须与执行会话一致）' }
 
   const ledgerRecordId: string | undefined = (() => {
     const task = loadBoard().tasks.find(t => t.id === taskId)
@@ -49,6 +52,7 @@ export function reportTaskResult(taskId: string, input: ReportInput): ReportOutc
     return running?.ledgerRecordId
   })()
 
+  let mismatch = false
   let settled: RunRecord | undefined
   let updated: TaskRecord | undefined
   transact((store) => {
@@ -56,6 +60,11 @@ export function reportTaskResult(taskId: string, input: ReportInput): ReportOutc
     if (task === undefined || task.archived === true) return
     const running = [...task.runs].reverse().find(r => r.status === '运行中')
     if (running === undefined) return
+    // F-03 防伪造：上报会话必须与派发的执行会话一致，否则拒绝落终态
+    if (running.sessionId === undefined || running.sessionId !== input.sessionId.trim()) {
+      mismatch = true
+      return
+    }
     running.status = input.status
     running.finishedAt = new Date().toISOString()
     running.summary = trimmed
@@ -67,6 +76,9 @@ export function reportTaskResult(taskId: string, input: ReportInput): ReportOutc
     updated = task
   })
 
+  if (mismatch) {
+    return { ok: false, error: '上报会话与任务执行会话不一致（已拒绝落终态，防伪造）' }
+  }
   if (settled === undefined || updated === undefined) {
     return { ok: false, error: `任务 ${taskId} 没有进行中的执行可上报（不存在、已归档或已结算）` }
   }
