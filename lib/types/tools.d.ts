@@ -11,6 +11,26 @@
  * @module @dsh-extra/dsh-task-board/tools
  */
 import type { Context } from '@deepseek-ai/cordis';
+/** 看板服务的最小结构视图（对话内下单用；宿主 index.ts 经 injectServiceGetter 注入）。 */
+interface DelegateService {
+    createWithGovernance(input: {
+        title: string;
+        prompt: string;
+        actionType: string;
+        targetScope: string;
+        actionLevel: 'L0' | 'L1' | 'L2' | 'L3';
+        cron?: string;
+    }): Promise<{
+        id: string;
+        title: string;
+    }>;
+    run(id: string, trigger: string): Promise<{
+        status?: string;
+    }>;
+}
+/** 注入看板服务获取器（宿主 index.ts apply 内接线；工具执行时惰性解析）。 */
+export declare function injectServiceGetter(getter: (() => DelegateService | undefined) | undefined): void;
 export declare const name = "tool-task-board";
 export declare const inject: string[];
 export declare function apply(ctx: Context): void;
+export {};

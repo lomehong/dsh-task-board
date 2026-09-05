@@ -32,8 +32,22 @@ export interface ServiceOptions {
   retryBackoffMs?: number
 }
 
+/** 活动视图（主任拍板：看板 = 唯一活动权威）。dsh-twin 活动区段按此结构消费。 */
+export interface BoardActivity {
+  at: string
+  /** 进行中任务的执行现场 */
+  runningTasks: Array<{ taskId: string; title: string; sessionId?: string }>
+  /** 运行中且无任务归属的会话（自由会话） */
+  freeSessions: Array<{ sessionId: string; title?: string }>
+  /** 待主任审批的任务 */
+  pendingApprovals: Array<{ taskId: string; title: string }>
+  /** 最近完成的任务（含结果摘要，按时间倒序，封顶 5） */
+  recentCompleted: Array<{ taskId: string; title: string; status: string; finishedAt?: string; summary?: string }>
+}
+
 export class TaskBoardService {
   private readonly runner: TaskRunner
+  private readonly gatewayClient: GatewayClient
   logger?: { info?: (m: string) => void; warn?: (m: string) => void }
   private tickTimer?: ReturnType<typeof setInterval>
   private readonly tickIntervalMs: number
@@ -41,9 +55,14 @@ export class TaskBoardService {
   private readonly launchRetries: number
   private readonly retryBackoffMs: number
   private ticking = false
+  private activity: BoardActivity = {
+    at: new Date().toISOString(),
+    runningTasks: [], freeSessions: [], pendingApprovals: [], recentCompleted: [],
+  }
 
   constructor(gateway: TypertGateway, options: ServiceOptions = {}) {
-    this.runner = new TaskRunner(new GatewayClient(gateway))
+    this.gatewayClient = new GatewayClient(gateway)
+    this.runner = new TaskRunner(this.gatewayClient)
     this.tickIntervalMs = options.tickIntervalMs ?? 15_000
     this.defaultWorkspaceId = options.defaultWorkspaceId !== undefined ? options.defaultWorkspaceId : undefined
     this.launchRetries = Math.max(0, options.launchRetries ?? 0)
@@ -53,7 +72,66 @@ export class TaskBoardService {
   /** 宿主接线后启动 tick 循环；返回停止函数。 */
   start(): () => void {
     this.tickTimer = setInterval(() => { void this.tick() }, this.tickIntervalMs)
+    void this.refreshActivity().catch(() => { /* 初始刷新失败等下一轮 tick */ })
     return () => { if (this.tickTimer !== undefined) clearInterval(this.tickTimer) }
+  }
+
+  /**
+   * 活动视图（主任拍板：看板 = 唯一活动权威）。
+   * tick 周期刷新缓存；此处同步返回缓存——消费方（dsh-twin 活动区段）
+   * 在 systemPrompt 组装时同步读取，绝无网络等待。
+   */
+  activityView(): BoardActivity {
+    return this.activity
+  }
+
+  /**
+   * 刷新活动视图：进行中任务的执行现场、待审批、最近完成、自由会话
+   * （运行中且未归属任何任务的会话——经宿主 session/list 观察）。
+   * 会话维度失败只降级该维度，不影响任务维度。公有：测试与宿主可直接触发。
+   */
+  async refreshActivity(): Promise<void> {
+    const at = new Date().toISOString()
+    const tasks = loadBoard().tasks.filter(t => t.archived !== true)
+    const runningTasks: BoardActivity['runningTasks'] = []
+    const pendingApprovals: BoardActivity['pendingApprovals'] = []
+    const sessionIds = new Set<string>()
+    for (const t of tasks) {
+      for (const r of t.runs) {
+        if (r.status === '运行中' && r.sessionId !== undefined) {
+          runningTasks.push({ taskId: t.id, title: t.title, sessionId: r.sessionId })
+          sessionIds.add(r.sessionId)
+        }
+      }
+      const last = t.runs[t.runs.length - 1]
+      if (last !== undefined && last.status === '待审批') pendingApprovals.push({ taskId: t.id, title: t.title })
+    }
+    const recentCompleted: BoardActivity['recentCompleted'] = tasks
+      .filter(t => t.lastStatus === '成功' || t.lastStatus === '失败')
+      .sort((a, b) => String(b.lastRunAt ?? '').localeCompare(String(a.lastRunAt ?? '')))
+      .slice(0, 5)
+      .map(t => {
+        const last = t.runs[t.runs.length - 1]
+        // filter 已保证 lastStatus ∈ {成功, 失败}
+        const status = t.lastStatus === '成功' ? '成功' : '失败'
+        return {
+          taskId: t.id, title: t.title, status,
+          ...(t.lastRunAt !== undefined ? { finishedAt: t.lastRunAt } : {}),
+          ...(last?.summary !== undefined ? { summary: last.summary } : {}),
+        }
+      })
+    const freeSessions: BoardActivity['freeSessions'] = []
+    try {
+      const res = (await this.gatewayClient.invoke('session', 'list')) as {
+        items?: ReadonlyArray<{ sessionId?: string; running?: boolean; title?: string }>
+      }
+      for (const it of res.items ?? []) {
+        if (it.running !== true || it.sessionId === undefined || sessionIds.has(it.sessionId)) continue
+        if (freeSessions.length >= 8) break
+        freeSessions.push({ sessionId: it.sessionId, ...(it.title !== undefined && it.title !== '' ? { title: it.title } : {}) })
+      }
+    } catch { /* 会话维度降级：自由会话留空，任务维度照常 */ }
+    this.activity = { at, runningTasks, freeSessions, pendingApprovals, recentCompleted }
   }
 
   /** 状态快照（浏览器异步视图的完整数据面）。governance.mode 供客户端渲染治理徽标。 */
@@ -198,6 +276,8 @@ export class TaskBoardService {
           }
         }
       }
+      // c) 活动视图刷新（看板 = 唯一活动权威；会话维度失败自行降级）
+      await this.refreshActivity()
     } finally {
       this.ticking = false
     }

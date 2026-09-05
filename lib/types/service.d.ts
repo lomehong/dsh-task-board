@@ -25,8 +25,37 @@ export interface ServiceOptions {
     /** 重试间隔基数毫秒（缺省 500ms，按次数线性退避） */
     retryBackoffMs?: number;
 }
+/** 活动视图（主任拍板：看板 = 唯一活动权威）。dsh-twin 活动区段按此结构消费。 */
+export interface BoardActivity {
+    at: string;
+    /** 进行中任务的执行现场 */
+    runningTasks: Array<{
+        taskId: string;
+        title: string;
+        sessionId?: string;
+    }>;
+    /** 运行中且无任务归属的会话（自由会话） */
+    freeSessions: Array<{
+        sessionId: string;
+        title?: string;
+    }>;
+    /** 待主任审批的任务 */
+    pendingApprovals: Array<{
+        taskId: string;
+        title: string;
+    }>;
+    /** 最近完成的任务（含结果摘要，按时间倒序，封顶 5） */
+    recentCompleted: Array<{
+        taskId: string;
+        title: string;
+        status: string;
+        finishedAt?: string;
+        summary?: string;
+    }>;
+}
 export declare class TaskBoardService {
     private readonly runner;
+    private readonly gatewayClient;
     logger?: {
         info?: (m: string) => void;
         warn?: (m: string) => void;
@@ -37,9 +66,22 @@ export declare class TaskBoardService {
     private readonly launchRetries;
     private readonly retryBackoffMs;
     private ticking;
+    private activity;
     constructor(gateway: TypertGateway, options?: ServiceOptions);
     /** 宿主接线后启动 tick 循环；返回停止函数。 */
     start(): () => void;
+    /**
+     * 活动视图（主任拍板：看板 = 唯一活动权威）。
+     * tick 周期刷新缓存；此处同步返回缓存——消费方（dsh-twin 活动区段）
+     * 在 systemPrompt 组装时同步读取，绝无网络等待。
+     */
+    activityView(): BoardActivity;
+    /**
+     * 刷新活动视图：进行中任务的执行现场、待审批、最近完成、自由会话
+     * （运行中且未归属任何任务的会话——经宿主 session/list 观察）。
+     * 会话维度失败只降级该维度，不影响任务维度。公有：测试与宿主可直接触发。
+     */
+    refreshActivity(): Promise<void>;
     /** 状态快照（浏览器异步视图的完整数据面）。governance.mode 供客户端渲染治理徽标。 */
     state(): TaskBoardStore & {
         scheduler: {
