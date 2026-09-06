@@ -33,6 +33,8 @@ export interface RunRecord {
   trigger: '手动' | '定时'
   /** 已为执行会话播种原生 goal（结算感知 goal 相位；L0/播种失败为 false/缺省） */
   goalSeeded?: boolean
+  /** 会话认领执行（task_claim）：模型在调用会话 inline 干活，结算等 task_report */
+  claimed?: boolean
 }
 
 export interface TaskRecord {

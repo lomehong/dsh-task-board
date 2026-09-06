@@ -11,7 +11,7 @@
  * @module @dsh-extra/dsh-task-board/tools
  */
 import type { Context } from '@deepseek-ai/cordis';
-/** 看板服务的最小结构视图（对话内下单用；宿主 index.ts 经 injectServiceGetter 注入）。 */
+/** 看板服务的最小结构视图（对话内下单/认领用；宿主 index.ts 经 injectServiceGetter 注入）。 */
 interface DelegateService {
     createWithGovernance(input: {
         title: string;
@@ -27,6 +27,12 @@ interface DelegateService {
     run(id: string, trigger: string): Promise<{
         status?: string;
     }>;
+    /** 会话认领执行（task_claim）：把调用会话绑定为执行现场，认领即治理裁决 */
+    claim(taskId: string, sessionId: string, trigger?: string): {
+        status?: string;
+        sessionId?: string;
+        summary?: string;
+    };
 }
 /** 注入看板服务获取器（宿主 index.ts apply 内接线；工具执行时惰性解析）。 */
 export declare function injectServiceGetter(getter: (() => DelegateService | undefined) | undefined): void;

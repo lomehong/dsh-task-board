@@ -281,3 +281,47 @@ describe('task_approve（对话内批准，主任拍板）', () => {
     await expect(approve.execute({ task_id: taskId }, { agent: { id: 'session-master' } })).rejects.toThrow('账本服务不可用')
   })
 })
+
+describe('task_claim（对话内认领执行，主任拍板）', () => {
+  async function registerClaimTool(): Promise<{ execute: (args: unknown, exec?: unknown) => Promise<unknown> }> {
+    const registered = new Map<string, { execute: (args: unknown, exec?: unknown) => Promise<unknown> }>()
+    const mod = await import('../src/tools.ts')
+    mod.apply({ tools: { register: (tool: { name: string; execute: (args: unknown, exec?: unknown) => Promise<unknown> }) => { registered.set(tool.name, tool) } } } as never)
+    const claim = registered.get('task_claim')
+    if (claim === undefined) throw new Error('task_claim 未注册')
+    return claim
+  }
+
+  it('L1 任务认领：放行并绑定调用会话（claimed run 运行中）', async () => {
+    const t = createTask({ title: '【测试】开发任务', prompt: 'p', actionType: '开发', targetScope: '本机仓库', actionLevel: 'L1' })
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    const claim = await registerClaimTool()
+    const out = (await claim.execute({ task_id: t.id }, { agent: { id: 'session-master-1' } })) as { ok: boolean; run_status: string }
+    expect(out.ok).toBe(true)
+    expect(out.run_status).toBe('运行中')
+    const st = await import('../src/ledger.ts')
+    const task = st.loadBoard().tasks.find(x => x.id === t.id)!
+    expect(task.column).toBe('进行中')
+    expect(task.runs[0].sessionId).toBe('session-master-1')
+    expect(task.runs[0].claimed).toBe(true)
+  })
+
+  it('L3 禁区任务：认领即拒绝（本地降级）', async () => {
+    const t = createTask({ title: '【测试】L3 禁区', prompt: 'p', actionType: '转账', targetScope: '外部', actionLevel: 'L3' })
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    const claim = await registerClaimTool()
+    const out = (await claim.execute({ task_id: t.id }, { agent: { id: 'session-master-1' } })) as { ok: boolean; run_status: string }
+    expect(out.ok).toBe(true)
+    expect(out.run_status).toBe('已阻断')
+  })
+
+  it('并发双运行防护：已有运行中执行 → 拒绝重复认领', async () => {
+    const t = createTask({ title: '【测试】重复认领', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    const claim = await registerClaimTool()
+    const first = (await claim.execute({ task_id: t.id }, { agent: { id: 's1' } })) as { run_status: string }
+    expect(first.run_status).toBe('运行中')
+    const second = (await claim.execute({ task_id: t.id }, { agent: { id: 's2' } })) as { run_status: string }
+    expect(second.run_status).toBe('已阻断')
+  })
+})

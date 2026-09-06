@@ -50,8 +50,11 @@ export declare class TaskRunner {
     launch(task: TaskRecord, trigger?: '手动' | '定时'): Promise<LaunchResult>;
     /** 完成判定：先 follow 唤醒会话（订阅事件流驱动 agent 循环消费排队消息），再回溯事件找 turn/end。
      *  @param opts.goalSeeded 执行会话已播种原生 goal 时，turn/end 只代表一轮结束——
-     *   以 goal 相位结算：active → 继续等（下一轮）、complete → 成功、blocked → 失败（含受阻原因）。 */
+     *   以 goal 相位结算：active → 继续等（下一轮）、complete → 成功、blocked → 失败（含受阻原因）。
+     *  @param opts.deferTurnEnd 会话认领执行（task_claim）时，turn/end 不结算——等 task_report
+     *   上报（模型 finish turn ≠ 工作完成）；滞留由 stuck 兜底强制取消。 */
     inspect(sessionId: string, startedAt: number, opts?: {
         goalSeeded?: boolean;
+        deferTurnEnd?: boolean;
     }): Promise<ExecutionOutcome>;
 }

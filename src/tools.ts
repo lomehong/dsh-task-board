@@ -15,7 +15,7 @@ import { reportTaskResult, type ReportStatus } from './report.ts'
 import { currentLedger } from './governance.ts'
 import { loadBoard } from './ledger.ts'
 
-/** 看板服务的最小结构视图（对话内下单用；宿主 index.ts 经 injectServiceGetter 注入）。 */
+/** 看板服务的最小结构视图（对话内下单/认领用；宿主 index.ts 经 injectServiceGetter 注入）。 */
 interface DelegateService {
   createWithGovernance(input: {
     title: string
@@ -26,6 +26,8 @@ interface DelegateService {
     cron?: string
   }): Promise<{ id: string; title: string }>
   run(id: string, trigger: string): Promise<{ status?: string }>
+  /** 会话认领执行（task_claim）：把调用会话绑定为执行现场，认领即治理裁决 */
+  claim(taskId: string, sessionId: string, trigger?: string): { status?: string; sessionId?: string; summary?: string }
 }
 
 let serviceGetter: (() => DelegateService | undefined) | undefined
@@ -201,6 +203,56 @@ export function apply(ctx: Context): void {
     })
   } catch (e) {
     try { console.warn('[dsh-task-board] task_delegate 工具注册失败（跳过）:', e instanceof Error ? e.message : String(e)) } catch { /* 忽略 */ }
+  }
+  // ── task_claim：对话内认领执行（主任拍板的对话闭环）——模型在本会话直接开工 ──
+  try {
+    tools.register({
+      name: 'task_claim',
+      description:
+        '认领一个看板任务到当前会话执行（主任说"同意/开始/继续做"时使用）。认领即治理裁决：' +
+        'L1 开发类放行留痕，L2 需已获授权（未授权会被拦，主任批准后重新认领即可），L3 拒绝。' +
+        '认领后在当前会话直接开工，完成时调用 task_report 上报结果。',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['task_id'],
+        properties: {
+          task_id: { type: 'string', description: '看板任务号（待执行任务，如 TB-…）' },
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean' },
+            task_id: { type: 'string' },
+            run_status: { type: 'string' },
+            summary: { type: 'string' },
+            error: { type: 'string' },
+          },
+        },
+        render: (_args, value) => {
+          const v = value as { ok?: boolean; run_status?: string; summary?: string; error?: string }
+          if (v.ok !== true) return [{ type: 'text', text: `认领失败：${v.error ?? '未知原因'}` }]
+          return [{ type: 'text', text: `任务已认领（${v.run_status}）。现在开始在本会话执行，完成后调用 task_report 上报结果。${v.summary !== undefined && v.summary !== '' ? ` 治理提示：${v.summary}` : ''}` }]
+        },
+      },
+      execute: async (args, exec) => {
+        const a = (args ?? {}) as { task_id?: string }
+        const taskId = typeof a.task_id === 'string' ? a.task_id.trim() : ''
+        if (taskId === '') throw new Error('task_id 必填')
+        // 调用方身份：当前会话即执行现场（run.sessionId 绑定，task_report 防伪造依赖它）
+        const caller = String((exec as { agent?: { id?: unknown } } | undefined)?.agent?.id ?? '')
+        if (caller === '') throw new Error('task_claim 必须在 agent 会话内调用（缺调用方身份）')
+        const svc = serviceGetter?.()
+        if (svc === undefined || typeof svc.claim !== 'function') throw new Error('看板服务不可用（宿主未就绪）')
+        const run = svc.claim(taskId, caller, '手动')
+        return { ok: true, task_id: taskId, run_status: String(run.status ?? ''), summary: run.summary }
+      },
+    })
+  } catch (e) {
+    try { console.warn('[dsh-task-board] task_claim 工具注册失败（跳过）:', e instanceof Error ? e.message : String(e)) } catch { /* 忽略 */ }
   }
   // ── task_approve：对话内批准（主任拍板）——账本审批闭环的最后一块 ──
   try {

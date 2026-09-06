@@ -109,6 +109,15 @@ export declare class TaskBoardService {
     createWithGovernance(input: Parameters<typeof createTask>[0]): Promise<TaskRecord>;
     /** 执行任务：账本裁决 → 放行则投递分身会话。返回执行记录（含审批令牌时为待审批）。 */
     run(taskId: string, trigger: '手动' | '定时'): Promise<RunRecord>;
+    /**
+     * 认领执行（task_claim，主任拍板的对话闭环）：把调用会话绑定为任务的执行现场——
+     * **不派发新会话**，模型在当前会话 inline 干活，完成后经 task_report 上报结算。
+     *
+     * 治理与 run 相同：认领即裁决（L1 开发类放行留痕；L2 无授权 → 待审批 + 令牌，
+     * 主任批准后重新认领即放行；L3 拒绝）。同一任务不允许并发双运行。
+     * 结算语义：claimed run 的 turn/end 不结算（等 task_report），滞留由 stuck 兜底。
+     */
+    claim(taskId: string, sessionId: string, trigger?: '手动' | '定时'): RunRecord;
     /** tick：调度触发 + 运行中执行的结果判定。整体兜底 catch——任何单次失败
      *  （fs 抖动/网关挂起降级）都不允许以 unhandledRejection 击穿宿主进程（SRE H1）。 */
     tick(): Promise<void>;
