@@ -321,6 +321,8 @@ describe('reportTaskResult：会话绑定防伪造（宪章 F-03）', () => {
     expect(bad.error).toMatch(/不一致/)
     const good = reportTaskResult(t.id, { status: '成功', summary: '真实摘要', sessionId: 'S-exec' })
     expect(good.ok).toBe(true)
-    expect(loadBoard().tasks.find(x => x.id === t.id)?.column).toBe('已完成')
+    // 主任拍板的验收语义：自报 ≠ 完成——先进「待确认」，主任确认后才落终态
+    expect(loadBoard().tasks.find(x => x.id === t.id)?.column).toBe('进行中')
+    expect(loadBoard().tasks.find(x => x.id === t.id)?.lastStatus).toBe('待确认')
   })
 })

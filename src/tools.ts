@@ -73,7 +73,7 @@ export function apply(ctx: Context): void {
       name: 'task_report',
       description:
         '上报当前看板任务的执行结果（状态 + 给主任看的摘要）。看板投递的任务提示词中带有任务号；' +
-        '上报后任务即落定终态，主任在任务看板看到的就是你在这里写的摘要——请如实、具体。',
+        '**自报 ≠ 完成**：上报后任务进入「待主任确认」，主任确认后才落定终态——请如实、具体。',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -96,7 +96,7 @@ export function apply(ctx: Context): void {
         render: (_args, value) => {
           const v = value as { ok?: boolean; error?: string }
           if (v.ok !== true) return [{ type: 'text', text: `上报失败：${v.error ?? '未知原因'}` }]
-          return [{ type: 'text', text: '结果已上报任务看板，主任可在看板中查看。' }]
+          return [{ type: 'text', text: '结果已自报任务看板，进入「待主任确认」——主任确认后才算完成。' }]
         },
       },
       execute: async (args, exec) => {
@@ -248,7 +248,14 @@ export function apply(ctx: Context): void {
         const svc = serviceGetter?.()
         if (svc === undefined || typeof svc.claim !== 'function') throw new Error('看板服务不可用（宿主未就绪）')
         const run = svc.claim(taskId, caller, '手动')
-        return { ok: true, task_id: taskId, run_status: String(run.status ?? ''), summary: run.summary }
+        // 宿主按 lossless JSON 校验工具输出——undefined 属性会整包被拒（实测），
+        // 只回传有值的字段
+        return {
+          ok: true,
+          task_id: taskId,
+          run_status: String(run.status ?? ''),
+          ...(run.summary !== undefined && run.summary !== '' ? { summary: run.summary } : {}),
+        }
       },
     })
   } catch (e) {

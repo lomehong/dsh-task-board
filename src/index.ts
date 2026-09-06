@@ -157,6 +157,10 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
   // 1) service 立即组装 + 启动 cron tick（typertGateway 已通过 default 函数上的 inject 声明）
   const service = createService(ctx.typertGateway)
   service.logger = ctx.logger
+  // 启动对账（系统性修复）：上一进程遗留的「运行中」run 已随重启终止（会话是
+  // 进程本地执行现场）——一律结算为已取消，避免僵尸 run 卡死认领/上报/滞留兜底
+  const orphaned = service.settleOrphanedRuns()
+  if (orphaned > 0) log(`启动对账：已结算 ${orphaned} 个随重启终止的遗留执行（→已取消）`)
   const stop = service.start()
   log('任务看板服务已启动（cron tick + 运行中执行结算）')
 

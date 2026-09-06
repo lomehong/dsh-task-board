@@ -79,6 +79,13 @@ export declare class TaskBoardService {
     private ticking;
     private activity;
     constructor(gateway: TypertGateway, options?: ServiceOptions);
+    /**
+     * 宿主启动对账（系统性修复：僵尸 run 卡死认领/上报）：会话是**进程本地**执行
+     * 现场——上一进程遗留的「运行中」执行已随重启终止（turn 永远不会结束了）。
+     * 一律结算为「已取消」，避免僵尸 run 卡死 task_claim 的并发防护与 task_report
+     * 的防伪造校验。返回清理数量（供启动日志）。
+     */
+    settleOrphanedRuns(): number;
     /** 宿主接线后启动 tick 循环；返回停止函数。 */
     start(): () => void;
     /**

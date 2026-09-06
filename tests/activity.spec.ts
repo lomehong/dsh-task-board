@@ -324,4 +324,53 @@ describe('task_claim（对话内认领执行，主任拍板）', () => {
     const second = (await claim.execute({ task_id: t.id }, { agent: { id: 's2' } })) as { run_status: string }
     expect(second.run_status).toBe('已阻断')
   })
+
+  it('认领成功的返回值不得携带 undefined 属性（回归：宿主 lossless JSON 校验整包拒绝）', async () => {
+    const t = createTask({ title: '【测试】无摘要认领', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    const claim = await registerClaimTool()
+    const out = (await claim.execute({ task_id: t.id }, { agent: { id: 's1' } })) as Record<string, unknown>
+    for (const [k, v] of Object.entries(out)) {
+      expect(v, `字段 ${k} 为 undefined——lossless JSON 校验会整包拒绝`).not.toBeUndefined()
+    }
+    // 被治理拦截的认领（带 summary）也全字段有值
+    const t2 = createTask({ title: '【测试】L3 拒绝认领', prompt: 'p', actionType: '转账', targetScope: '外部', actionLevel: 'L3' })
+    const out2 = (await claim.execute({ task_id: t2.id }, { agent: { id: 's1' } })) as Record<string, unknown>
+    for (const [k, v] of Object.entries(out2)) {
+      expect(v, `字段 ${k} 为 undefined`).not.toBeUndefined()
+    }
+  })
+})
+
+describe('启动对账（settleOrphanedRuns）', () => {
+  async function registerClaimTool(): Promise<{ execute: (args: unknown, exec?: unknown) => Promise<unknown> }> {
+    const registered = new Map<string, { execute: (args: unknown, exec?: unknown) => Promise<unknown> }>()
+    const mod = await import('../src/tools.ts')
+    mod.apply({ tools: { register: (tool: { name: string; execute: (args: unknown, exec?: unknown) => Promise<unknown> }) => { registered.set(tool.name, tool) } } } as never)
+    const claim = registered.get('task_claim')
+    if (claim === undefined) throw new Error('task_claim 未注册')
+    return claim
+  }
+
+  it('上一进程遗留的「运行中」run 一律结算为已取消，解除认领/上报卡死', async () => {
+    const { createTask: ct, transact: tx, loadBoard: lb } = await import('../src/ledger.ts')
+    const t = ct({ title: '【测试】重启遗留', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
+    tx(store => {
+      const task = store.tasks.find(x => x.id === t.id)!
+      task.runs.push({ id: 'RUN-orphan', status: '运行中', startedAt: new Date().toISOString(), trigger: '手动', sessionId: 'session-dead' } as never)
+      task.column = '进行中'
+    })
+    const svc = new TaskBoardService({ invoke: async () => ({}) } as never)
+    const n = svc.settleOrphanedRuns()
+    expect(n).toBe(1)
+    const task = lb().tasks.find(x => x.id === t.id)!
+    expect(task.runs[0].status).toBe('已取消')
+    expect(task.runs[0].summary).toContain('宿主重启')
+    expect(task.column).toBe('待办')
+    // 结算后即可正常认领（不再被并发防护卡死）
+    injectServiceGetter(() => svc as never)
+    const claim = await registerClaimTool()
+    const out = (await claim.execute({ task_id: t.id }, { agent: { id: 'session-new' } })) as { run_status: string }
+    expect(out.run_status).toBe('运行中')
+  })
 })
