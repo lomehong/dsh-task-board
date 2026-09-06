@@ -38,7 +38,8 @@
     "build": "tsc -b tsconfig.json",
     "test": "vitest run",
     "typecheck": "tsc -b tsconfig.json --noEmit",
-    "build:client": "node scripts/build-client.mjs"
+    "build:client": "node scripts/build-client.mjs",
+    "typecheck:client": "tsc -p tsconfig.client.json"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1-rc.4",

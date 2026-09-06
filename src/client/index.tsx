@@ -213,15 +213,16 @@ function BoardPage() {
     )
   }
 
-  const renderColumn = (col: Column): JSX.Element => {
-    const list = byCol(col.id)
-    const settled = col === '已完成' || col === '已失败'
-    const visible = settled && settledExpanded[col] !== true ? list.slice(0, SETTLED_LIMIT) : list
+  const renderColumn = (colId: Column): JSX.Element => {
+    const list = byCol(colId)
+    const label = COLUMNS.find(c => c.id === colId)?.label ?? colId
+    const settled = colId === '已完成' || colId === '已失败'
+    const visible = settled && settledExpanded[colId] !== true ? list.slice(0, SETTLED_LIMIT) : list
     const rest = list.length - visible.length
     return (
-      <div key={col} style={s.col}>
+      <div key={colId} style={s.col}>
         <div style={s.colHead}>
-          <span>{col.label}</span>
+          <span>{label}</span>
           <span style={s.colCount}>{list.length}</span>
         </div>
         <div style={s.colBody}>
@@ -231,7 +232,7 @@ function BoardPage() {
             <>
               {visible.map(t => renderCard(t))}
               {settled && rest > 0 && (
-                <button style={s.moreBtn} onClick={() => setSettledExpanded(prev => ({ ...prev, [col]: true }))}>
+                <button style={s.moreBtn} onClick={() => setSettledExpanded(prev => ({ ...prev, [colId]: true }))}>
                   展开其余 {rest} 条
                 </button>
               )}
@@ -337,12 +338,12 @@ function BoardPage() {
           style={s.input}
           placeholder="搜索：任务号 / 标题 / 内容…"
           value={query}
-          onChange={(e) => { setQuery(e.target.value); setListPage(1) }}
+          onChange={(e: React.ChangeEvent) => { setQuery(e.target.value); setListPage(1) }}
         />
         <select
           style={s.select}
           value={levelFilter}
-          onChange={(e) => { setLevelFilter(e.target.value as '全部' | TaskRecord['actionLevel']); setListPage(1) }}
+          onChange={(e: React.ChangeEvent) => { setLevelFilter(e.target.value as '全部' | TaskRecord['actionLevel']); setListPage(1) }}
         >
           <option value="全部">全部级别</option>
           {LEVEL_OPTIONS.map(l => <option key={l} value={l}>{l}</option>)}
@@ -398,28 +399,28 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   }
 
   return (
-    <div style={s.modal} onClick={() => setShowCreate && onClose()}>
-      <div style={s.modalBox} onClick={(e) => e.stopPropagation()}>
+    <div style={s.modal} onClick={onClose}>
+      <div style={s.modalBox} onClick={(e: React.ChangeEvent) => e.stopPropagation()}>
         <h2 style={s.modalTitle}>新建任务</h2>
         <div style={s.modalField}>
           <label style={s.modalFieldLabel}>标题（必填）</label>
-          <input style={s.modalInput} value={title} onChange={(e) => setTitle(e.target.value)} />
+          <input style={s.modalInput} value={title} onChange={(e: React.ChangeEvent) => setTitle(e.target.value)} />
         </div>
         <div style={s.modalField}>
           <label style={s.modalFieldLabel}>执行提示词（必填——执行会话依赖它独立完成工作）</label>
-          <textarea style={{ ...s.modalInput, minHeight: 90 }} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+          <textarea style={{ ...s.modalInput, minHeight: 90 }} value={prompt} onChange={(e: React.ChangeEvent) => setPrompt(e.target.value)} />
         </div>
         <div style={s.modalField}>
           <label style={s.modalFieldLabel}>动作类型（账本分级依据）</label>
-          <input style={s.modalInput} value={actionType} onChange={(e) => setActionType(e.target.value)} />
+          <input style={s.modalInput} value={actionType} onChange={(e: React.ChangeEvent) => setActionType(e.target.value)} />
         </div>
         <div style={s.modalField}>
           <label style={s.modalFieldLabel}>目标范围（账本分级依据）</label>
-          <input style={s.modalInput} value={targetScope} onChange={(e) => setTargetScope(e.target.value)} />
+          <input style={s.modalInput} value={targetScope} onChange={(e: React.ChangeEvent) => setTargetScope(e.target.value)} />
         </div>
         <div style={s.modalField}>
           <label style={s.modalFieldLabel}>动作级别</label>
-          <select style={s.modalInput} value={actionLevel} onChange={(e) => setActionLevel(e.target.value as TaskRecord['actionLevel'])}>
+          <select style={s.modalInput} value={actionLevel} onChange={(e: React.ChangeEvent) => setActionLevel(e.target.value as TaskRecord['actionLevel'])}>
             {LEVEL_OPTIONS.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
           {(actionLevel === 'L2' || actionLevel === 'L3') && (
@@ -428,7 +429,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
         </div>
         <div style={s.modalField}>
           <label style={s.modalFieldLabel}>cron（可选，留空=一次性）</label>
-          <input style={s.modalInput} value={cron} onChange={(e) => setCron(e.target.value)} placeholder="如：0 9 * * 1-5" />
+          <input style={s.modalInput} value={cron} onChange={(e: React.ChangeEvent) => setCron(e.target.value)} placeholder="如：0 9 * * 1-5" />
         </div>
         <div style={s.modalActions}>
           <button style={s.btn2} onClick={onClose}>取消</button>
