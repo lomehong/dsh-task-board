@@ -439,10 +439,15 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   )
 }
 
-export default function activate(context: ClientContext): void {
-  context.slots.register({
-    name: 'task-board',
-    title: '任务看板',
-    render: () => <BoardPage />,
-  })
+// 宿主客户端模块契约：命名导出 apply + inject 声明（DI 后才可访问 ctx.slots）。
+// 注意：不要改成 default activate + slots.register({name…render}) 的形态——
+// 那既没有挂进 conversation.view 槽位（看板 Tab 不渲染），也会在 DI 缺失时
+// 抛 "cannot get property slots without inject"（2026-09-05 自锁同类事故）。
+export function apply(ctx: ClientContext): void {
+  ctx.slots.inject('conversation.view', () =>
+    ctx.slots.register(
+      { name: 'conversation.view', id: 'task-board', order: 22, label: () => '任务看板' },
+      BoardPage,
+    ),
+  )
 }
