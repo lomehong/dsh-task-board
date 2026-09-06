@@ -78,6 +78,7 @@ const s: Record<string, React.CSSProperties> = {
   cardDetail: { borderTop: '1px dashed var(--dsw-alias-border-l2)', marginTop: 6, paddingTop: 6 },
   cardDetailLine: { fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)', marginBottom: 2 },
   cardActions: { display: 'flex', gap: 6, marginTop: 8 },
+  runningHint: { fontSize: 12, color: 'var(--dsw-alias-state-business-primary)' },
   moreBtn: { width: '100%', padding: '6px 0', border: '1px dashed var(--dsw-alias-border-l2)', borderRadius: 8, background: 'transparent', color: 'var(--dsw-alias-label-secondary)', fontSize: 12, cursor: 'pointer' },
   levelOk: { background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)', padding: '1px 6px', borderRadius: 4, fontSize: 11 },
   levelWarn: { background: 'var(--dsw-alias-state-warn-tertiary)', color: 'var(--dsw-alias-state-warn-label)', padding: '1px 6px', borderRadius: 4, fontSize: 11 },
@@ -196,18 +197,22 @@ function BoardPage() {
           </div>
         )}
         <div style={s.cardActions}>
-          <button style={s.btn2} onClick={() => void action('run', { id: t.id }).then((d) => {
-            // 执行结果反馈（审计 UX L-2）：治理拦截/待审批不再静默无响应
-            const run = (d as { run?: { status?: string; summary?: string } }).run
-            if (run && (run.status === '已阻断' || run.status === '待审批')) {
-              window.alert(`${run.status}：${run.summary ?? '该任务需要主任批准后才会执行（可在今日待办批准）'}`)
-            }
-          })}>▶ 执行</button>
-          {opts.archived === true ? (
+          {/* 按钮跟随任务阶段（主任反馈）：已完成/进行中不显示执行；进行中不显示归档 */}
+          {t.column !== '已完成' && t.column !== '进行中' && (
+            <button style={s.btn2} onClick={() => void action('run', { id: t.id }).then((d) => {
+              // 执行结果反馈（审计 UX L-2）：治理拦截/待审批不再静默无响应
+              const run = (d as { run?: { status?: string; summary?: string } }).run
+              if (run && (run.status === '已阻断' || run.status === '待审批')) {
+                window.alert(`${run.status}：${run.summary ?? '该任务需要主任批准后才会执行（可在今日待办批准）'}`)
+              }
+            })}>▶ 执行</button>
+          )}
+          {t.column === '进行中' && <span style={s.runningHint}>执行中…</span>}
+          {t.column !== '进行中' && (opts.archived === true ? (
             <button style={s.btn2} onClick={() => void action('archive', { id: t.id, task: { archived: false } })}>恢复</button>
           ) : (
             <button style={s.btn2} onClick={() => void action('archive', { id: t.id, task: { archived: true } })}>归档</button>
-          )}
+          ))}
         </div>
       </div>
     )
@@ -279,8 +284,9 @@ function BoardPage() {
                     <td style={s.tdTime}>{fmtTime(t.updatedAt)}</td>
                     <td style={s.td}>
                       <div style={s.cardActions}>
-                        <button style={s.btn2} onClick={() => void action('run', { id: t.id })}>▶</button>
-                        <button style={s.btn2} onClick={() => void action('archive', { id: t.id, task: { archived: !t.archived } })}>{t.archived === true ? '恢复' : '归档'}</button>
+                        {t.column !== '已完成' && t.column !== '进行中' && <button style={s.btn2} onClick={() => void action('run', { id: t.id })}>▶</button>}
+                        {t.column === '进行中' && <span style={s.runningHint}>执行中…</span>}
+                        {t.column !== '进行中' && <button style={s.btn2} onClick={() => void action('archive', { id: t.id, task: { archived: !t.archived } })}>{t.archived === true ? '恢复' : '归档'}</button>}
                       </div>
                     </td>
                   </tr>
