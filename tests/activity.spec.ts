@@ -110,12 +110,34 @@ describe('activityView（看板 = 唯一活动权威）', () => {
 })
 
 describe('task_delegate（对话内下单）', () => {
-  async function registerTools(): Promise<Map<string, { execute: (args: unknown, exec?: unknown) => Promise<unknown> }>> {
-    const registered = new Map<string, { execute: (args: unknown, exec?: unknown) => Promise<unknown> }>()
+  interface ToolRegistrationLike {
+    name: string
+    output: { schema: { properties: Record<string, unknown> } }
+    execute: (args: unknown, exec?: unknown) => Promise<unknown>
+  }
+  async function registerTools(): Promise<Map<string, ToolRegistrationLike>> {
+    const registered = new Map<string, ToolRegistrationLike>()
     const mod = await import('../src/tools.ts')
-    mod.apply({ tools: { register: (tool: { name: string; execute: (args: unknown, exec?: unknown) => Promise<unknown> }) => { registered.set(tool.name, tool) } } } as never)
+    mod.apply({ tools: { register: (tool: ToolRegistrationLike) => { registered.set(tool.name, tool) } } } as never)
     return registered
   }
+
+  it('工具返回键必须全部在声明的 output schema 内（回归：宿主按 additionalProperties:false 校验，多余键即拒）', async () => {
+    const registered = await registerTools()
+    const delegate = registered.get('task_delegate')!
+    expect(delegate).toBeDefined()
+    const declared = new Set(Object.keys(delegate.output.schema.properties))
+    injectServiceGetter(() => ({
+      createWithGovernance: async () => ({ id: 'TB-x', title: 't' }),
+      run: async () => ({ status: '运行中' }),
+    }) as never)
+    const out = (await delegate.execute({
+      title: 't', prompt: 'p', action_type: '答疑', target_scope: '本机', action_level: 'L0',
+    }, { agent: { id: 'session-test-1' } })) as Record<string, unknown>
+    for (const key of Object.keys(out)) {
+      expect(declared.has(key), `返回键 ${key} 未在 output schema 中声明`).toBe(true)
+    }
+  })
 
   it('立项即预裁决 + run_now 立即执行', async () => {
     const created: Array<Record<string, unknown>> = []

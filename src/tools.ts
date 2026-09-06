@@ -140,6 +140,7 @@ export function apply(ctx: Context): void {
           properties: {
             ok: { type: 'boolean' },
             task_id: { type: 'string' },
+            action_level: { type: 'string', description: '实际生效的动作级别（含强制提级后）' },
             run_status: { type: 'string' },
             error: { type: 'string' },
           },
