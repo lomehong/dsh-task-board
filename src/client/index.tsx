@@ -117,8 +117,13 @@ function levelStyle(level: string): React.CSSProperties {
   return s.levelOk
 }
 
+// ISO(UTC) → 查看者本地时区（存储保持 UTC，仅展示层转换）
 function fmtTime(iso: string): string {
-  return iso.length >= 16 ? iso.slice(0, 16).replace('T', ' ') : iso
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 function BoardPage() {
