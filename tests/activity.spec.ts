@@ -315,13 +315,30 @@ describe('task_claim（对话内认领执行，主任拍板）', () => {
     expect(out.run_status).toBe('已阻断')
   })
 
-  it('并发双运行防护：已有运行中执行 → 拒绝重复认领', async () => {
-    const t = createTask({ title: '【测试】重复认领', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
+  it('执行现场接管：他会话的运行中执行 → 新会话认领即接管（旧现场取消留审计）', async () => {
+    const t = createTask({ title: '【测试】跨会话接管', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
     injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
     const claim = await registerClaimTool()
     const first = (await claim.execute({ task_id: t.id }, { agent: { id: 's1' } })) as { run_status: string }
     expect(first.run_status).toBe('运行中')
+    // 会话压缩/实例更替：新会话 s2 认领同一任务 → 接管而非拒绝
     const second = (await claim.execute({ task_id: t.id }, { agent: { id: 's2' } })) as { run_status: string }
+    expect(second.run_status).toBe('运行中')
+    const st = await import('../src/ledger.ts')
+    const task = st.loadBoard().tasks.find(x => x.id === t.id)!
+    const cancelled = task.runs.filter(r => r.status === '已取消')
+    expect(cancelled).toHaveLength(1)
+    expect(cancelled[0].summary).toContain('接管')
+    expect(task.runs[task.runs.length - 1].sessionId).toBe('s2')
+  })
+
+  it('同会话重复认领 → 已阻断（执行现场已在你手上）', async () => {
+    const t = createTask({ title: '【测试】同会话重复', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    const claim = await registerClaimTool()
+    const first = (await claim.execute({ task_id: t.id }, { agent: { id: 's1' } })) as { run_status: string }
+    expect(first.run_status).toBe('运行中')
+    const second = (await claim.execute({ task_id: t.id }, { agent: { id: 's1' } })) as { run_status: string }
     expect(second.run_status).toBe('已阻断')
   })
 

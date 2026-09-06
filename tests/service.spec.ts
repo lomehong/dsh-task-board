@@ -305,8 +305,8 @@ describe('service：执行状态机', () => {
   })
 })
 
-describe('reportTaskResult：会话绑定防伪造（宪章 F-03）', () => {
-  it('上报会话与执行会话一致时落终态；不一致时拒绝', async () => {
+describe('reportTaskResult：会话绑定（防伪造 v2 接管语义）', () => {
+  it('上报会话不一致时接管绑定并留审计；一致时直接自报——均进「待确认」', async () => {
     // 直接用 report.ts + ledger.ts 组合：先造一个运行中执行
     const { createTask, transact, loadBoard } = await import('../src/ledger.ts')
     const { reportTaskResult } = await import('../src/report.ts')
@@ -316,13 +316,13 @@ describe('reportTaskResult：会话绑定防伪造（宪章 F-03）', () => {
       task.runs.push({ id: 'RUN-1', startedAt: new Date().toISOString(), status: '运行中', trigger: '手动', sessionId: 'S-exec' })
       task.column = '进行中'
     })
-    const bad = reportTaskResult(t.id, { status: '成功', summary: '伪造摘要', sessionId: 'S-other' })
-    expect(bad.ok).toBe(false)
-    expect(bad.error).toMatch(/不一致/)
-    const good = reportTaskResult(t.id, { status: '成功', summary: '真实摘要', sessionId: 'S-exec' })
-    expect(good.ok).toBe(true)
-    // 主任拍板的验收语义：自报 ≠ 完成——先进「待确认」，主任确认后才落终态
-    expect(loadBoard().tasks.find(x => x.id === t.id)?.column).toBe('进行中')
-    expect(loadBoard().tasks.find(x => x.id === t.id)?.lastStatus).toBe('待确认')
+    const other = reportTaskResult(t.id, { status: '成功', summary: '接管方上报', sessionId: 'S-other' })
+    expect(other.ok).toBe(true)
+    const after = loadBoard().tasks.find(x => x.id === t.id)!
+    // 接管：绑定更新为新会话 + 摘要留审计；状态进「待确认」等主任确认
+    expect(after.runs[0].sessionId).toBe('S-other')
+    expect(after.runs[0].summary).toContain('执行接管')
+    expect(after.lastStatus).toBe('待确认')
+    expect(after.column).toBe('进行中')
   })
 })
