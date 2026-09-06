@@ -369,6 +369,29 @@ describe('启动对账（settleOrphanedRuns）', () => {
     return claim
   }
 
+  it('自动归档：已完成满 7 天归档；已失败/待办永不自动归档（P1 主任拍板）', async () => {
+    const { createTask: ct, transact: tx, loadBoard: lb } = await import('../src/ledger.ts')
+    const done = ct({ title: '【测试】完成8天', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
+    const doneFresh = ct({ title: '【测试】完成1天', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
+    const failed = ct({ title: '【测试】失败8天', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
+    const pending = ct({ title: '【测试】待办8天', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
+    const old = new Date(Date.now() - 8 * 86_400_000).toISOString()
+    const fresh = new Date(Date.now() - 1 * 86_400_000).toISOString()
+    tx(store => {
+      const d = store.tasks.find(x => x.id === done.id)!; d.column = '已完成'; d.updatedAt = old
+      const f = store.tasks.find(x => x.id === doneFresh.id)!; f.column = '已完成'; f.updatedAt = fresh
+      const fl = store.tasks.find(x => x.id === failed.id)!; fl.column = '已失败'; fl.updatedAt = old
+      const p = store.tasks.find(x => x.id === pending.id)!; p.column = '待办'; p.updatedAt = old
+    })
+    const svc = new TaskBoardService({ invoke: async () => ({}) } as never)
+    await svc.tick()
+    const board = lb()
+    expect(board.tasks.find(x => x.id === done.id)?.archived).toBe(true)
+    expect(board.tasks.find(x => x.id === doneFresh.id)?.archived).toBeUndefined()
+    expect(board.tasks.find(x => x.id === failed.id)?.archived).toBeUndefined()
+    expect(board.tasks.find(x => x.id === pending.id)?.archived).toBeUndefined()
+  })
+
   it('上一进程遗留的「运行中」run 一律结算为已取消，解除认领/上报卡死', async () => {
     const { createTask: ct, transact: tx, loadBoard: lb } = await import('../src/ledger.ts')
     const t = ct({ title: '【测试】重启遗留', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })

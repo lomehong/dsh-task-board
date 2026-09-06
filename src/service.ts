@@ -35,6 +35,10 @@ export interface ServiceOptions {
   stuckRunTimeoutMs?: number
 }
 
+/** 自动归档阈值（主任拍板 P1）：「已完成」确认满 7 天自动归档——看板只呈现
+ * 当前要关心的活；已失败/待办永不自动归档（失败是需要主任注意的信号）。 */
+export const ARCHIVE_AFTER_MS = 7 * 24 * 60 * 60 * 1000
+
 /** 活动视图（主任拍板：看板 = 唯一活动权威）。dsh-twin 活动区段按此结构消费。 */
 export interface BoardActivity {
   at: string
@@ -413,6 +417,21 @@ export class TaskBoardService {
         })
         this.logger?.warn?.(`[dsh-task-board] 滞留执行已强制取消：${s.taskId}（会话 ${s.sessionId}）`)
       }
+
+      // b1) 自动归档（P1，主任拍板）：已完成满 7 天 → 归档。看板永远只呈现
+      //「当前要关心的活」；归档任务数据保留，客户端「含归档」开关可查、可恢复。
+      // 只有「已完成」自动归档；已失败是需要主任注意的信号，永不自动归档。
+      const archiveCutoff = new Date(Date.now() - ARCHIVE_AFTER_MS).toISOString()
+      let archivedCount = 0
+      transact((s2) => {
+        for (const t of s2.tasks) {
+          if (t.column === '已完成' && t.archived !== true && t.updatedAt < archiveCutoff) {
+            t.archived = true
+            archivedCount++
+          }
+        }
+      })
+      if (archivedCount > 0) this.logger?.info?.(`[dsh-task-board] 自动归档 ${archivedCount} 个已完成任务（确认满 7 天）`)
 
       // b) 运行中的执行做结果判定
       const store = loadBoard()

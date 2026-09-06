@@ -27,6 +27,9 @@ export interface ServiceOptions {
     /** 滞留兜底阈值毫秒（缺省 6 小时）：运行中 run 超过该时长强制取消（High-2 防永久 pending） */
     stuckRunTimeoutMs?: number;
 }
+/** 自动归档阈值（主任拍板 P1）：「已完成」确认满 7 天自动归档——看板只呈现
+ * 当前要关心的活；已失败/待办永不自动归档（失败是需要主任注意的信号）。 */
+export declare const ARCHIVE_AFTER_MS: number;
 /** 活动视图（主任拍板：看板 = 唯一活动权威）。dsh-twin 活动区段按此结构消费。 */
 export interface BoardActivity {
     at: string;
