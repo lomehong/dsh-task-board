@@ -54,6 +54,10 @@ export interface LedgerModule {
     approval?: { id: string }
   }
   fillResult(recordId: string, input: { summary?: unknown; masterFeedback?: unknown }): { ok: boolean; error?: string }
+  /** 审批令牌放行（幂等；对话闭环 task_approve 用）。缺席 = 账本旧版本。 */
+  approve?(approvalId: string, by?: { by?: string; via?: '审批卡片' | '命令' | 'web' }): Promise<unknown> | unknown
+  /** 待批准令牌清单（供 task_approve 按 recordId 定位令牌）。 */
+  pendingApprovals?(): Array<{ id: string; recordId?: string; state?: string; expiresAt?: string }>
 }
 
 export interface LedgerFillResult {
@@ -68,6 +72,11 @@ export interface LocalGovernanceNotifier {
 
 let ledgerGetter: () => LedgerModule | undefined = () => undefined
 let notifierGetter: (() => LocalGovernanceNotifier | undefined) | undefined
+
+/** 当前账本模块（同包 tools.ts 的 task_approve 审批闭环用；缺席返回 undefined）。 */
+export function currentLedger(): LedgerModule | undefined {
+  return ledgerGetter?.()
+}
 
 /**
  * 注入套件账本的惰性获取器。

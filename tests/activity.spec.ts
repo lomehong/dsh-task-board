@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createTask, transact } from '../src/ledger.ts'
 import { TaskBoardService } from '../src/service.ts'
+import { injectLedgerGetter } from '../src/governance.ts'
+import { injectServiceGetter } from '../src/tools.ts'
 import { injectServiceGetter } from '../src/tools.ts'
 
 let home: string
@@ -209,5 +211,73 @@ describe('task_delegate（对话内下单）', () => {
     await expect(registered.get('task_delegate')!.execute({
       title: 'x', prompt: 'y', action_type: '答疑', target_scope: '本机', action_level: 'L0',
     }, { agent: { id: 'session-test-1' } })).rejects.toThrow('看板服务不可用')
+  })
+})
+
+describe('task_approve（对话内批准，主任拍板）', () => {
+  async function registerApproveTool(): Promise<{ execute: (args: unknown, exec?: unknown) => Promise<unknown> }> {
+    const registered = new Map<string, { execute: (args: unknown, exec?: unknown) => Promise<unknown> }>()
+    const mod = await import('../src/tools.ts')
+    mod.apply({ tools: { register: (tool: { name: string; execute: (args: unknown, exec?: unknown) => Promise<unknown> }) => { registered.set(tool.name, tool) } } } as never)
+    const approve = registered.get('task_approve')
+    if (approve === undefined) throw new Error('task_approve 未注册')
+    return approve
+  }
+
+  function seedBlockedTask(execSessionId: string): { taskId: string; ledgerRecordId: string } {
+    const t = createTask({ title: '【测试】L2 待审批任务', prompt: 'p', actionType: '发布内容', targetScope: '外部', actionLevel: 'L2' })
+    transact(store => {
+      const task = store.tasks.find(x => x.id === t.id)!
+      task.runs.push({ id: 'r-blocked', status: '待审批', startedAt: new Date().toISOString(), trigger: '手动', ledgerRecordId: 'A-TEST-1', sessionId: execSessionId } as never)
+    })
+    return { taskId: t.id, ledgerRecordId: 'A-TEST-1' }
+  }
+
+  it('批准待审批令牌并自动重跑（调用会话 ≠ 执行会话，防自批通过）', async () => {
+    const { taskId, ledgerRecordId } = seedBlockedTask('session-exec-1')
+    const approvedIds: string[] = []
+    const reruns: string[] = []
+    // 账本 fake：pending 含目标令牌；approve 幂等落账
+    const { injectLedgerGetter } = await import('../src/governance.ts')
+    injectLedgerGetter(() => ({
+      check: () => { throw new Error('不应被调用') },
+      fillResult: () => ({ ok: true }),
+      approve: (id: string) => { approvedIds.push(id); return { ok: true, grant: { id: 'G-TEST' }, record: { id: ledgerRecordId } } },
+      pendingApprovals: () => [{ id: 'P-TEST', recordId: ledgerRecordId, state: '待批准', expiresAt: new Date(Date.now() + 60_000).toISOString() }],
+    }) as never)
+    injectServiceGetter(() => ({
+      createWithGovernance: async () => ({ id: 'TB-x', title: 'x' }),
+      run: async (id: string) => { reruns.push(id); return { status: '运行中' } },
+    }) as never)
+    const approve = await registerApproveTool()
+    const out = (await approve.execute({ task_id: taskId }, { agent: { id: 'session-master-1' } })) as { ok: boolean; task_id: string; grant_id: string; run_status: string }
+    expect(out.ok).toBe(true)
+    expect(out.task_id).toBe(taskId)
+    expect(out.grant_id).toBe('G-TEST')
+    expect(out.run_status).toBe('运行中')
+    expect(approvedIds).toEqual(['P-TEST'])
+    expect(reruns).toEqual([taskId])
+  })
+
+  it('防自批：调用会话 = 执行会话 → 拒绝', async () => {
+    const { taskId } = (await import('../src/ledger.ts')) && seedBlockedTask('session-exec-1')
+    const { injectLedgerGetter } = await import('../src/governance.ts')
+    injectLedgerGetter(() => ({
+      check: () => { throw new Error('不应被调用') },
+      fillResult: () => ({ ok: true }),
+      approve: () => { throw new Error('不应被调用') },
+      pendingApprovals: () => [{ id: 'P-X', recordId: 'A-X', state: '待批准' }],
+    }) as never)
+    injectServiceGetter(() => ({ run: async () => ({ status: '运行中' }) }) as never)
+    const approve = await registerApproveTool()
+    await expect(approve.execute({ task_id: taskId }, { agent: { id: 'session-exec-1' } })).rejects.toThrow('防自批')
+  })
+
+  it('账本缺席 → 报错不静默', async () => {
+    const { taskId } = seedBlockedTask('session-exec-1')
+    injectLedgerGetter(() => undefined)
+    injectServiceGetter(() => ({ run: async () => ({ status: '运行中' }) }) as never)
+    const approve = await registerApproveTool()
+    await expect(approve.execute({ task_id: taskId }, { agent: { id: 'session-master' } })).rejects.toThrow('账本服务不可用')
   })
 })
