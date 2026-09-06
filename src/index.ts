@@ -15,6 +15,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { createService } from './service.ts'
+import { confirmTaskResult } from './report.ts'
 import { injectLedgerGetter, injectNotifier, type LedgerModule } from './governance.ts'
 import { injectMemoryGetter, type TaskMemoryModule } from './memory.ts'
 import { injectServiceGetter } from './tools.ts'
@@ -63,11 +64,11 @@ function respondJson(res: ResponseLike, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-function handleAction(service: ReturnType<typeof createService>, req: RequestLike, res: ResponseLike): Promise<void> {
+function handleAction(service: ReturnType<typeof createService>, confirmTask: (taskId: string, approved: boolean) => { ok: boolean; error?: string }, req: RequestLike, res: ResponseLike): Promise<void> {
   return (async (): Promise<void> => {
     if (req.method !== 'POST' || !sameOrigin(req)) { respondJson(res, 403, { ok: false, error: 'denied' }); return }
     try {
-      const body = JSON.parse((await readBody(req)) || '{}') as { type?: string; id?: string; task?: Record<string, unknown> }
+      const body = JSON.parse((await readBody(req)) || '{}') as { type?: string; id?: string; approved?: boolean; sessionId?: string; task?: Record<string, unknown> }
       switch (body.type) {
         case 'create': {
           const t = body.task ?? {}
@@ -83,6 +84,8 @@ function handleAction(service: ReturnType<typeof createService>, req: RequestLik
         case 'archive': respondJson(res, 200, { ok: true, task: service.archive(String(body.id ?? ''), body.task?.archived === true) }); return
         case 'delete': respondJson(res, 200, { ok: true, removed: service.remove(String(body.id ?? '')) }); return
         case 'run': { const run = await service.run(String(body.id ?? ''), '手动'); respondJson(res, 200, { ok: true, run }); return }
+        case 'claim': { const run = service.claim(String(body.id ?? ''), String(body.sessionId ?? ''), '手动'); respondJson(res, 200, { ok: true, run }); return }
+        case 'confirm': { const r = confirmTask(String(body.id ?? ''), body.approved !== false); respondJson(res, r.ok ? 200 : 400, r); return }
         default: respondJson(res, 400, { ok: false, error: `未知动作类型: ${String(body.type)}` })
       }
     } catch (e) { respondJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) }) }
@@ -193,14 +196,14 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
         }))
         disposers.push(web.register({
           kind: 'exact', path: '/dsh-task-board/action',
-          handler: (req, res) => { void handleAction(service, req, res) },
+          handler: (req, res) => { void handleAction(service, confirmTaskResult, req, res) },
         }))
         log('HTTP 路由已注册（/dsh-task-board/*）')
         return () => { for (const d of disposers) d(); stop() }
       })
     } else {
       web.register({ kind: 'exact', path: '/dsh-task-board/state', handler: (_req, res) => respondJson(res, 200, { ok: true, state: service.state() }) })
-      web.register({ kind: 'exact', path: '/dsh-task-board/action', handler: (req, res) => { void handleAction(service, req, res) } })
+      web.register({ kind: 'exact', path: '/dsh-task-board/action', handler: (req, res) => { void handleAction(service, confirmTaskResult, req, res) } })
       log('HTTP 路由已注册（/dsh-task-board/*；宿主无 effect API）')
     }
   })

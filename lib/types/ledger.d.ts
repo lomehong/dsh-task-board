@@ -1,5 +1,5 @@
 export type TaskColumn = '待规划' | '待办' | '进行中' | '已完成' | '已失败';
-export type RunStatus = '运行中' | '成功' | '失败' | '已取消' | '待审批' | '已阻断';
+export type RunStatus = '运行中' | '成功' | '失败' | '已取消' | '待审批' | '已阻断' | '待确认';
 export interface RunRecord {
     id: string;
     startedAt: string;
@@ -17,6 +17,8 @@ export interface RunRecord {
     goalSeeded?: boolean;
     /** 会话认领执行（task_claim）：模型在调用会话 inline 干活，结算等 task_report */
     claimed?: boolean;
+    /** 分身自报的结果状态（待确认期间记录，主任确认后落定终态） */
+    reportedStatus?: string;
 }
 export interface TaskRecord {
     id: string;

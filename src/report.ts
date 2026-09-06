@@ -1,10 +1,10 @@
 /**
  * 执行结果上报（模型侧 → 看板）：task_report 工具的落地实现。
  *
- * 设计：分身会话在执行看板任务时调用 task_report，把**模型自己声明的**
- * 结果状态与摘要回填到最新的「运行中」执行记录，并联动任务列与账本留痕。
- * 上报即终态——运行记录立即落定，tick 的 turn/end 推断降级为
- * 「模型未上报时」的兜底（消除自由文本没人消费、宿主模板句回填的断点）。
+ * 设计（主任拍板的验收语义：**分身自报 ≠ 完成，主人确认才是完成**）：
+ * 分身会话在执行看板任务时调用 task_report，把**模型自己声明的**结果状态与摘要
+ * 回填到最新的「运行中」执行记录——运行进入「待确认」态（非终态），任务保持
+ * 进行中；**主任确认后才落定终态并沉淀记忆**。tick 的 turn/end 推断降级为兜底。
  *
  * 本模块与宿主入口共享同一 ledger.ts 单写者事务（同模块单例）。
  * 并发边界（如实声明，安全审计 M-4）：单宿主进程内由 transact 同步串行保证；
@@ -14,7 +14,7 @@ import { transact, loadBoard, type TaskRecord, type RunRecord } from './ledger.t
 import { fillResult } from './governance.ts'
 import { recordTaskOutcome } from './memory.ts'
 
-/** 上报状态：任务级二元终态（部分完成以 summary 说明，状态按实际达成填）。 */
+/** 上报状态：分身自报（主任确认前为「待确认」，非终态）。 */
 export type ReportStatus = '成功' | '失败'
 
 export interface ReportInput {
@@ -32,8 +32,9 @@ export interface ReportOutcome {
 }
 
 /**
- * 上报执行结果：定位该任务最新的「运行中」执行记录并落定终态。
- * 账本记录在位时同步回填模型真实摘要（替代宿主模板句）。
+ * 上报执行结果：定位该任务最新的「运行中」执行记录，进入「待主任确认」态。
+ * 账本记录在位时同步回填模型真实摘要（标注「待主任确认」）。
+ * 主任确认（confirmTaskResult）后才落定终态并沉淀记忆。
  *
  * @param taskId - 看板任务 id（投递提示词中携带）。
  * @param input - status + summary + 调用方会话 id。
@@ -62,41 +63,78 @@ export function reportTaskResult(taskId: string, input: ReportInput): ReportOutc
     if (task === undefined || task.archived === true) return
     const running = [...task.runs].reverse().find(r => r.status === '运行中')
     if (running === undefined) return
-    // F-03 防伪造：上报会话必须与派发的执行会话一致，否则拒绝落终态
+    // F-03 防伪造：上报会话必须与派发的执行会话一致，否则拒绝进入待确认
     if (running.sessionId === undefined || running.sessionId !== input.sessionId.trim()) {
       mismatch = true
       return
     }
-    running.status = input.status
+    // 主任拍板的验收语义：自报 ≠ 完成。进入「待确认」态（非终态）——
+    // 主任在今日待办/对话里确认后才落定终态并沉淀记忆。
+    running.status = '待确认'
+    running.reportedStatus = input.status
     running.finishedAt = new Date().toISOString()
     running.summary = trimmed
-    task.lastStatus = input.status
+    task.lastStatus = '待确认'
     task.lastRunAt = running.finishedAt
-    task.column = input.status === '成功' ? '已完成' : '已失败'
     task.updatedAt = task.lastRunAt
     settled = running
     updated = task
   })
 
   if (mismatch) {
-    return { ok: false, error: '上报会话与任务执行会话不一致（已拒绝落终态，防伪造）' }
+    return { ok: false, error: '上报会话与任务执行会话不一致（已拒绝进入待确认，防伪造）' }
   }
   if (settled === undefined || updated === undefined) {
     return { ok: false, error: `任务 ${taskId} 没有进行中的执行可上报（不存在、已归档或已结算）` }
   }
 
-  // 账本留痕：用模型真实摘要回填（无账本记录时静默跳过——本地降级模式）
+  // 账本留痕：分身自报摘要回填，标注「待主任确认」（本地降级模式无账本记录时跳过）
   if (ledgerRecordId !== undefined) {
-    const filled = fillResult(ledgerRecordId, `任务 ${taskId} 执行${input.status}（分身自报）：${trimmed}`)
+    const filled = fillResult(ledgerRecordId, `任务 ${taskId} 执行${input.status}（分身自报，待主任确认）：${trimmed}`)
     if (!filled.ok) {
-      // 回填失败不影响看板终态；留痕缺口在下次审计可见
+      // 回填失败不影响看板状态；留痕缺口在下次审计可见
     }
   }
 
-  // 记忆沉淀（决策五「记忆是经验积累」）：分身亲报的结果写入共享记忆，
-  // 主任以后问「最近完成了哪些工作」即可被 tool-memory / 按回合装配检索到。
-  // fire-and-forget：写入失败不影响看板终态（memory.ts 内部已兜底）。
-  void recordTaskOutcome({ id: taskId, title: updated.title }, input.status, trimmed)
-
   return { ok: true, task: updated, run: settled }
+}
+
+/**
+ * 主任确认（今日待办按钮 / 对话内 task_approve 的落地点）：把「待确认」的自报
+ * 结果落定终态——确认 → 按自报状态记成功并沉淀记忆（已验证结果，主任背书）；
+ * 驳回 → 记失败（主任判定未通过）。仅对「待确认」运行生效，重复调用幂等安全。
+ *
+ * @param taskId - 看板任务 id。
+ * @param approved - true=主任确认自报结果；false=主任判定未通过。
+ * @param by - 确认来源标注。
+ * @returns 确认结果；无待确认运行时 ok=false。
+ */
+export function confirmTaskResult(
+  taskId: string,
+  approved: boolean,
+  by = '主任确认',
+): { ok: boolean; error?: string; task?: TaskRecord; run?: RunRecord } {
+  let settledRun: RunRecord | undefined
+  let taskRec: TaskRecord | undefined
+  transact((store) => {
+    const task = store.tasks.find(t => t.id === taskId)
+    if (task === undefined || task.archived === true) return
+    const pending = [...task.runs].reverse().find(r => r.status === '待确认')
+    if (pending === undefined) return
+    pending.status = approved ? '成功' : '失败'
+    pending.finishedAt = new Date().toISOString()
+    pending.summary = `${pending.summary}（${by}）`
+    task.lastStatus = pending.status
+    task.lastRunAt = pending.finishedAt ?? new Date().toISOString()
+    task.column = approved ? '已完成' : '已失败'
+    task.updatedAt = task.lastRunAt
+    settledRun = pending
+    taskRec = task
+  })
+  if (settledRun === undefined || taskRec === undefined) {
+    return { ok: false, error: `任务 ${taskId} 没有待确认的自报结果可确认` }
+  }
+  // 记忆沉淀（主任背书的已验证结果——「分身自报 ≠ 完成，主人确认才是」的终点）
+  void recordTaskOutcome({ id: taskId, title: taskRec.title }, approved ? '成功' : '失败', settledRun.summary ?? '')
+  return { ok: true, task: taskRec, run: settledRun }
 }
