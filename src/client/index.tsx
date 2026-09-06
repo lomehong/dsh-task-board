@@ -108,6 +108,7 @@ function BoardPage() {
     const d = await api<{ ok: boolean; error?: string }>('/dsh-task-board/action', { type, ...body })
     if (!d.ok) alert(d.error ?? '操作失败')
     await load()
+    return d
   }, [load])
 
   if (state === null) {
@@ -163,7 +164,13 @@ function BoardPage() {
                     </div>
                     <div style={s.cardDesc}>{t.prompt}</div>
                     <div style={s.cardActions}>
-                      <button style={s.btn2} onClick={() => void action('run', { id: t.id })}>▶ 执行</button>
+                      <button style={s.btn2} onClick={() => void action('run', { id: t.id }).then((d) => {
+                        // 执行结果反馈（审计 UX L-2）：治理拦截/待审批不再静默无响应
+                        const run = (d as { run?: { status?: string; summary?: string } }).run
+                        if (run && (run.status === '已阻断' || run.status === '待审批')) {
+                          window.alert(`${run.status}：${run.summary ?? '该任务需要主任批准后才会执行（可在今日待办批准）'}`)
+                        }
+                      })}>▶ 执行</button>
                       <button style={s.btn2} onClick={() => void action('archive', { id: t.id, task: { archived: true } })}>归档</button>
                     </div>
                   </div>

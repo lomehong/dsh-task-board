@@ -176,7 +176,7 @@ describe('task_delegate（对话内下单）', () => {
     }, exec)) as { action_level: string }
     expect(out1.action_level).toBe('L2') // 外发动词：L0 申报强制升 L2
     const out2 = (await delegate.execute({
-      title: '清理数据', prompt: '删除全部旧记录', action_type: '答疑', target_scope: '外部',
+      title: '清理数据', prompt: '删除数据中的全部旧记录', action_type: '答疑', target_scope: '外部',
       action_level: 'L0', run_now: false,
     }, exec)) as { action_level: string }
     expect(out2.action_level).toBe('L3') // 破坏性动词：强制 L3
