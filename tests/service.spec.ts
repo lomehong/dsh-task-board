@@ -160,7 +160,7 @@ describe('治理：账本在场完整裁决 / 缺席本地降级（宪章 §3.5�
     expect(v.reason).toMatch(/无账本治理|拒绝/)
   })
 
-  it('账本缺席本地降级：L2 拦截并尽力通知主任（不扩权，宪章 §3.2）', async () => {
+  it('账本缺席本地降级：L2 拦截并尽力通知主人（不扩权，宪章 §3.2）', async () => {
     const calls: Array<{ title: string; message: string }> = []
     injectNotifier(() => (input) => { calls.push(input); return true })
     const { adjudicate } = await import('../src/governance.ts')
@@ -319,7 +319,7 @@ describe('reportTaskResult：会话绑定（防伪造 v2 接管语义）', () =>
     const other = reportTaskResult(t.id, { status: '成功', summary: '接管方上报', sessionId: 'S-other' })
     expect(other.ok).toBe(true)
     const after = loadBoard().tasks.find(x => x.id === t.id)!
-    // 接管：绑定更新为新会话 + 摘要留审计；状态进「待确认」等主任确认
+    // 接管：绑定更新为新会话 + 摘要留审计；状态进「待确认」等主人确认
     expect(after.runs[0].sessionId).toBe('S-other')
     expect(after.runs[0].summary).toContain('执行接管')
     expect(after.lastStatus).toBe('待确认')

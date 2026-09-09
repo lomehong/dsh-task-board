@@ -17,7 +17,7 @@ export interface RunRecord {
     goalSeeded?: boolean;
     /** 会话认领执行（task_claim）：模型在调用会话 inline 干活，结算等 task_report */
     claimed?: boolean;
-    /** 分身自报的结果状态（待确认期间记录，主任确认后落定终态） */
+    /** 分身自报的结果状态（待确认期间记录，主人确认后落定终态） */
     reportedStatus?: string;
 }
 export interface TaskRecord {

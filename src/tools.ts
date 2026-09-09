@@ -1,7 +1,7 @@
 /**
  * 任务看板的模型工具入口：preset 行（`name: '@dsh-extra/dsh-task-board/tools'`）
  * 引用本模块，挂载后的分身会话获得 task_report 工具——把执行结果结构化回填
- * 看板（状态 + 给主任看的摘要），替代宿主侧 turn/end 推断与模板句回填
+ * 看板（状态 + 给主人看的摘要），替代宿主侧 turn/end 推断与模板句回填
  * （套件宪章第二阶段「任务层间挂链」）。
  *
  * 注册形态：鸭子类型 tools.register（对齐 dsh-computer/tools），不引入
@@ -72,8 +72,8 @@ export function apply(ctx: Context): void {
     tools.register({
       name: 'task_report',
       description:
-        '上报当前看板任务的执行结果（状态 + 给主任看的摘要）。看板投递的任务提示词中带有任务号；' +
-        '**自报 ≠ 完成**：上报后任务进入「待主任确认」，主任确认后才落定终态——请如实、具体。',
+        '上报当前看板任务的执行结果（状态 + 给主人看的摘要）。看板投递的任务提示词中带有任务号；' +
+        '**自报 ≠ 完成**：上报后任务进入「待主人确认」，主人确认后才落定终态——请如实、具体。',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -81,7 +81,7 @@ export function apply(ctx: Context): void {
         properties: {
           task_id: { type: 'string', description: '看板任务号（投递提示词中携带，如 TB-…）' },
           status: { type: 'string', enum: ['成功', '失败'], description: '执行结果状态' },
-          summary: { type: 'string', description: '结果摘要（主任直接阅读；含关键产出/结论/未决事项）' },
+          summary: { type: 'string', description: '结果摘要（主人直接阅读；含关键产出/结论/未决事项）' },
         },
       },
       output: {
@@ -96,7 +96,7 @@ export function apply(ctx: Context): void {
         render: (_args, value) => {
           const v = value as { ok?: boolean; error?: string }
           if (v.ok !== true) return [{ type: 'text', text: `上报失败：${v.error ?? '未知原因'}` }]
-          return [{ type: 'text', text: '结果已自报任务看板，进入「待主任确认」——主任确认后才算完成。' }]
+          return [{ type: 'text', text: '结果已自报任务看板，进入「待主人确认」——主人确认后才算完成。' }]
         },
       },
       execute: async (args, exec) => {
@@ -114,13 +114,13 @@ export function apply(ctx: Context): void {
   } catch (e) {
     try { console.warn('[dsh-task-board] task_report 工具注册失败（跳过）:', e instanceof Error ? e.message : String(e)) } catch { /* 忽略 */ }
   }
-  // ── task_delegate：对话内下单（主任拍板 #3，审计路线 P1-7）──
+  // ── task_delegate：对话内下单（主人拍板 #3，审计路线 P1-7）──
   try {
     tools.register({
       name: 'task_delegate',
       description:
-        '把主任口头布置的工作立项为看板任务（可立即执行）。凡主任交代的多步骤、耗时、需要跟进或定时性的工作，' +
-        '都应立任务而不是在对话里直接做——立项后主任可在任何通道问「在忙什么」看到进展。' +
+        '把主人口头布置的工作立项为看板任务（可立即执行）。凡主人交代的多步骤、耗时、需要跟进或定时性的工作，' +
+        '都应立任务而不是在对话里直接做——立项后主人可在任何通道问「在忙什么」看到进展。' +
         '自由会话里的自主目标需要转正为正式任务时，也用本工具（立项后原目标应暂停避免双跑）。' +
         'action_level 请按账本分级语义如实申报（L2 及以上未经主人批准不会执行，属正常治理流程）。',
       parameters: {
@@ -152,7 +152,7 @@ export function apply(ctx: Context): void {
         render: (_args, value) => {
           const v = value as { ok?: boolean; task_id?: string; run_status?: string; error?: string }
           if (v.ok !== true) return [{ type: 'text', text: `立项失败：${v.error ?? '未知原因'}` }]
-          return [{ type: 'text', text: `已立项 ${v.task_id}（${v.run_status}）。主任可在任务看板查看进展。` }]
+          return [{ type: 'text', text: `已立项 ${v.task_id}（${v.run_status}）。主人可在任务看板查看进展。` }]
         },
       },
       execute: async (args, exec) => {
@@ -204,13 +204,13 @@ export function apply(ctx: Context): void {
   } catch (e) {
     try { console.warn('[dsh-task-board] task_delegate 工具注册失败（跳过）:', e instanceof Error ? e.message : String(e)) } catch { /* 忽略 */ }
   }
-  // ── task_claim：对话内认领执行（主任拍板的对话闭环）——模型在本会话直接开工 ──
+  // ── task_claim：对话内认领执行（主人拍板的对话闭环）——模型在本会话直接开工 ──
   try {
     tools.register({
       name: 'task_claim',
       description:
-        '认领一个看板任务到当前会话执行（主任说"同意/开始/继续做"时使用）。认领即治理裁决：' +
-        'L1 开发类放行留痕，L2 需已获授权（未授权会被拦，主任批准后重新认领即可），L3 拒绝。' +
+        '认领一个看板任务到当前会话执行（主人说"同意/开始/继续做"时使用）。认领即治理裁决：' +
+        'L1 开发类放行留痕，L2 需已获授权（未授权会被拦，主人批准后重新认领即可），L3 拒绝。' +
         '认领后在当前会话直接开工，完成时调用 task_report 上报结果。',
       parameters: {
         type: 'object',
@@ -261,12 +261,12 @@ export function apply(ctx: Context): void {
   } catch (e) {
     try { console.warn('[dsh-task-board] task_claim 工具注册失败（跳过）:', e instanceof Error ? e.message : String(e)) } catch { /* 忽略 */ }
   }
-  // ── task_approve：对话内批准（主任拍板）——账本审批闭环的最后一块 ──
+  // ── task_approve：对话内批准（主人拍板）——账本审批闭环的最后一块 ──
   try {
     tools.register({
       name: 'task_approve',
       description:
-        '批准等待审批的看板任务（主任专用）。任务执行被治理拦截（L2+ 待审批）后，主任说"同意/批准"时调用：' +
+        '批准等待审批的看板任务（主人专用）。任务执行被治理拦截（L2+ 待审批）后，主人说"同意/批准"时调用：' +
         '放行该任务并自动重跑。防自批：不能批准由当前会话自己产生的审批；令牌已过期时会提示重新执行。',
       parameters: {
         type: 'object',
@@ -305,13 +305,13 @@ export function apply(ctx: Context): void {
         const task = loadBoard().tasks.find(t => t.id === taskId)
         if (task === undefined || task.archived === true) throw new Error(`任务不存在: ${taskId}`)
         const lastRun = [...task.runs].reverse()[0]
-        // ── 路径一：待确认的自报结果（主任拍板的验收语义：自报 ≠ 完成，主人确认才是）──
-        // 认领会话（主任在场）允许确认；看板派发的无人执行会话自批 → 拒绝
+        // ── 路径一：待确认的自报结果（主人拍板的验收语义：自报 ≠ 完成，主人确认才是）──
+        // 认领会话（主人在场）允许确认；看板派发的无人执行会话自批 → 拒绝
         if (lastRun !== undefined && lastRun.status === '待确认') {
           if (lastRun.claimed !== true && lastRun.sessionId === caller) {
-            throw new Error('不能批准自己执行会话的自报（防自批）——请主任在主人通道确认')
+            throw new Error('不能批准自己执行会话的自报（防自批）——请主人在主人通道确认')
           }
-          const r = confirmTaskResult(taskId, true, '主任会话确认')
+          const r = confirmTaskResult(taskId, true, '主人会话确认')
           if (!r.ok) throw new Error(r.error ?? '确认失败')
           return { ok: true, task_id: taskId, action: '已确认完成', run_status: r.run?.status ?? '成功' }
         }
@@ -320,10 +320,10 @@ export function apply(ctx: Context): void {
           throw new Error('该任务没有待审批的执行记录（可能未触发治理拦截或令牌已过期）——重新执行会重新裁决并生成新令牌')
         }
         // 防自批（安全红线）：调用会话不得批准自己执行现场产生的审批——
-        // 注入的执行会话无法自我放行，审批权始终在主任通道；
-        // 主任在场认领的会话（claimed）视为主任授权延伸，允许批准
+        // 注入的执行会话无法自我放行，审批权始终在主人通道；
+        // 主人在场认领的会话（claimed）视为主人授权延伸，允许批准
         if (blockedRun.sessionId !== undefined && blockedRun.sessionId === caller && blockedRun.claimed !== true) {
-          throw new Error('不能批准自己执行会话产生的审批（防自批）——请主任在主人通道批准')
+          throw new Error('不能批准自己执行会话产生的审批（防自批）——请主人在主人通道批准')
         }
         const ledger = currentLedger()
         if (ledger === undefined || typeof ledger.approve !== 'function' || typeof ledger.pendingApprovals !== 'function') {
@@ -331,7 +331,7 @@ export function apply(ctx: Context): void {
         }
         const pending = (ledger.pendingApprovals() ?? []).find(p => p.recordId === blockedRun.ledgerRecordId)
         if (pending === undefined) throw new Error('未找到待批准的审批令牌（可能已过期）——重新执行任务会重新裁决并生成新令牌')
-        const r = (await ledger.approve(pending.id, { by: '主任会话', via: '命令' })) as { ok?: boolean; grant?: { id?: string }; error?: string }
+        const r = (await ledger.approve(pending.id, { by: '主人会话', via: '命令' })) as { ok?: boolean; grant?: { id?: string }; error?: string }
         if (r?.ok !== true) throw new Error(r?.error ?? '批准失败')
         const svc = serviceGetter?.()
         if (svc === undefined || typeof svc.run !== 'function') throw new Error('看板服务不可用（宿主未就绪）')

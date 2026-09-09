@@ -16,7 +16,7 @@
  * 账本缺席（套件宪章 §1 原则二「运行独立」+ §3.5「治理自治」）：进入**本地降级
  * 策略**——核心功能（执行任务）保持可用，治理面显式降级：
  * - L0/L1：放行，RunRecord.summary 标注「无账本治理」
- * - L2：**拦截**（审计 F-02：降级不扩权，宪章 §3.2）+ 尽力通知主任；
+ * - L2：**拦截**（审计 F-02：降级不扩权，宪章 §3.2）+ 尽力通知主人；
  *   任务保留待办列，装回账本后即可走审批流
  * - L3：拒绝——不可逆动作（转账/删数据/账号操作等）在治理缺席时一律不放行，
  *   任务保留在待办列（不落已失败），安装账本后即可恢复完整治理
@@ -86,7 +86,7 @@ export interface LedgerFillResult {
     ok: boolean;
     error?: string;
 }
-/** 本地降级模式的主任通知器（通常由插件入口接 im-channel 主人绑定）。 */
+/** 本地降级模式的主人通知器（通常由插件入口接 im-channel 主人绑定）。 */
 export interface LocalGovernanceNotifier {
     (input: {
         title: string;
@@ -105,7 +105,7 @@ export declare function currentLedger(): LedgerModule | undefined;
  */
 export declare function injectLedgerGetter(getter: () => LedgerModule | undefined): void;
 /**
- * 注入主任通知器（可选增强）：本地降级模式下 L2 动作尽力经此通知主任。
+ * 注入主人通知器（可选增强）：本地降级模式下 L2 动作尽力经此通知主人。
  * 通常由插件入口接 im-channel（botsStatus 找主人绑定 + pushToUser）；
  * 返回 undefined 表示通知通道不可用——通知失败绝不阻断执行。
  */

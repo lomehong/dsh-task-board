@@ -2,7 +2,7 @@
  * 任务看板客户端（v0.2）：看板/列表双视图 + 折叠卡片 + 沉淀列收纳 + 搜索筛选 +
  * 含归档开关 + 自动归档（服务端：已完成满 7 天归档，本客户端提供「含归档」查看）。
  *
- * 呈现原则（主任拍板的 P1+P2）：看板永远只呈现「当前要关心的活」——
+ * 呈现原则（主人拍板的 P1+P2）：看板永远只呈现「当前要关心的活」——
  * 卡片默认折叠（点标题展开 prompt）、沉淀列只显示最近 5 条、已完成满 7 天
  * 自动归档；任务量大时切「列表」视图（表格 + 排序 + 分页）全局检索。
  *
@@ -202,13 +202,13 @@ function BoardPage() {
           </div>
         )}
         <div style={s.cardActions}>
-          {/* 按钮跟随任务阶段（主任反馈）：已完成/进行中不显示执行；进行中不显示归档 */}
+          {/* 按钮跟随任务阶段（主人反馈）：已完成/进行中不显示执行；进行中不显示归档 */}
           {t.column !== '已完成' && t.column !== '进行中' && (
             <button style={s.btn2} onClick={() => void action('run', { id: t.id }).then((d) => {
               // 执行结果反馈（审计 UX L-2）：治理拦截/待审批不再静默无响应
               const run = (d as { run?: { status?: string; summary?: string } }).run
               if (run && (run.status === '已阻断' || run.status === '待审批')) {
-                window.alert(`${run.status}：${run.summary ?? '该任务需要主任批准后才会执行（可在今日待办批准）'}`)
+                window.alert(`${run.status}：${run.summary ?? '该任务需要主人批准后才会执行（可在今日待办批准）'}`)
               }
             })}>▶ 执行</button>
           )}
@@ -338,7 +338,7 @@ function BoardPage() {
         )}
       </div>
       <p style={s.sub}>
-        任务中心化——布置 → 账本裁决 → 分身执行 → 自报 → 主任确认。已完成满 7 天自动归档（「含归档」可查）。
+        任务中心化——布置 → 账本裁决 → 分身执行 → 自报 → 主人确认。已完成满 7 天自动归档（「含归档」可查）。
       </p>
       <div style={s.actionRow}>
         <button style={s.btn} onClick={() => setShowCreate(true)}>+ 新建任务</button>
@@ -435,7 +435,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
             {LEVEL_OPTIONS.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
           {(actionLevel === 'L2' || actionLevel === 'L3') && (
-            <div style={s.modalHint}>L2/L3 创建时立即触发裁决：需主任批准后才可执行。</div>
+            <div style={s.modalHint}>L2/L3 创建时立即触发裁决：需主人批准后才可执行。</div>
           )}
         </div>
         <div style={s.modalField}>

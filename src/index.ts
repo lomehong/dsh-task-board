@@ -107,7 +107,7 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
   })
 
   // 记忆惰性解析（可选增强，宪章 §3.2）：任务落定时把结果沉淀进 dsh-memory
-  // 共享记忆（「已验证结果」），主任问「最近完成了哪些工作」即可被检索。
+  // 共享记忆（「已验证结果」），主人问「最近完成了哪些工作」即可被检索。
   // 缺席/失败由 memory.ts 显式降级（WARN 一次），不影响看板终态。
   injectMemoryGetter(() => {
     try {
@@ -117,7 +117,7 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
     }
   })
 
-  // 主任通知器（可选增强，宪章 §3.2）：无账本治理模式下 L2 动作降级运行时，
+  // 主人通知器（可选增强，宪章 §3.2）：无账本治理模式下 L2 动作降级运行时，
   // 尽力经 im-channel 主人绑定推送告知。im-channel 缺席/未绑定主人/推送失败
   // 一律静默跳过——通知是缓解措施，不是闸门（宪章 §3.2 降级第二要素）。
   injectNotifier(() => {
@@ -140,7 +140,7 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
             }
           }
         }
-        // 跨渠道去重后上限 3（与 dsh-twin 转人工同一预算哲学：保护主任注意力）
+        // 跨渠道去重后上限 3（与 dsh-twin 转人工同一预算哲学：保护主人注意力）
         let delivered = 0
         for (const t of targets.slice(0, 3)) {
           try {
@@ -175,7 +175,7 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
   try {
     ctx.provide?.('dsh-task-board', {
       /** 活动视图（看板 = 唯一活动权威；缓存由 tick 每 15s 刷新，同步读取）。
-       *  安全审计 M-3：故意不暴露 state()——完整状态（含主任任务 prompt 全文）
+       *  安全审计 M-3：故意不暴露 state()——完整状态（含主人任务 prompt 全文）
        *  只经同源 HTTP /dsh-task-board/state 供浏览器 UI，服务面收敛为最小投影。 */
       activity: () => service.activityView(),
     })

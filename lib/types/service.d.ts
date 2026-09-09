@@ -27,10 +27,10 @@ export interface ServiceOptions {
     /** 滞留兜底阈值毫秒（缺省 6 小时）：运行中 run 超过该时长强制取消（High-2 防永久 pending） */
     stuckRunTimeoutMs?: number;
 }
-/** 自动归档阈值（主任拍板 P1）：「已完成」确认满 7 天自动归档——看板只呈现
- * 当前要关心的活；已失败/待办永不自动归档（失败是需要主任注意的信号）。 */
+/** 自动归档阈值（主人拍板 P1）：「已完成」确认满 7 天自动归档——看板只呈现
+ * 当前要关心的活；已失败/待办永不自动归档（失败是需要主人注意的信号）。 */
 export declare const ARCHIVE_AFTER_MS: number;
-/** 活动视图（主任拍板：看板 = 唯一活动权威）。dsh-twin 活动区段按此结构消费。 */
+/** 活动视图（主人拍板：看板 = 唯一活动权威）。dsh-twin 活动区段按此结构消费。 */
 export interface BoardActivity {
     at: string;
     /** 进行中任务的执行现场 */
@@ -52,7 +52,7 @@ export interface BoardActivity {
         roundsStarted: number;
         maxGoalRounds: number;
     }>;
-    /** 待主任审批的任务 */
+    /** 待主人审批的任务 */
     pendingApprovals: Array<{
         taskId: string;
         title: string;
@@ -92,7 +92,7 @@ export declare class TaskBoardService {
     /** 宿主接线后启动 tick 循环；返回停止函数。 */
     start(): () => void;
     /**
-     * 活动视图（主任拍板：看板 = 唯一活动权威）。
+     * 活动视图（主人拍板：看板 = 唯一活动权威）。
      * tick 周期刷新缓存；此处同步返回缓存——消费方（dsh-twin 活动区段）
      * 在 systemPrompt 组装时同步读取，绝无网络等待。
      */
@@ -120,11 +120,11 @@ export declare class TaskBoardService {
     /** 执行任务：账本裁决 → 放行则投递分身会话。返回执行记录（含审批令牌时为待审批）。 */
     run(taskId: string, trigger: '手动' | '定时'): Promise<RunRecord>;
     /**
-     * 认领执行（task_claim，主任拍板的对话闭环）：把调用会话绑定为任务的执行现场——
+     * 认领执行（task_claim，主人拍板的对话闭环）：把调用会话绑定为任务的执行现场——
      * **不派发新会话**，模型在当前会话 inline 干活，完成后经 task_report 上报结算。
      *
      * 治理与 run 相同：认领即裁决（L1 开发类放行留痕；L2 无授权 → 待审批 + 令牌，
-     * 主任批准后重新认领即放行；L3 拒绝）。同一任务不允许并发双运行。
+     * 主人批准后重新认领即放行；L3 拒绝）。同一任务不允许并发双运行。
      * 结算语义：claimed run 的 turn/end 不结算（等 task_report），滞留由 stuck 兜底。
      */
     claim(taskId: string, sessionId: string, trigger?: '手动' | '定时'): RunRecord;

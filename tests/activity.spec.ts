@@ -1,5 +1,5 @@
 /**
- * 活动视图 + 对话内下单测试（主任拍板：看板 = 唯一活动权威；一批完成）：
+ * 活动视图 + 对话内下单测试（主人拍板：看板 = 唯一活动权威；一批完成）：
  * - activityView 聚合四个维度（任务执行现场 / 待审批 / 自由会话 / 最近完成）；
  * - task_delegate 立项即预裁决（createWithGovernance），run_now 控制立即执行；
  * - 看板服务缺席 → fail-closed 抛错，不静默假装立项。
@@ -214,7 +214,7 @@ describe('task_delegate（对话内下单）', () => {
   })
 })
 
-describe('task_approve（对话内批准，主任拍板）', () => {
+describe('task_approve（对话内批准，主人拍板）', () => {
   async function registerApproveTool(): Promise<{ execute: (args: unknown, exec?: unknown) => Promise<unknown> }> {
     const registered = new Map<string, { execute: (args: unknown, exec?: unknown) => Promise<unknown> }>()
     const mod = await import('../src/tools.ts')
@@ -282,7 +282,7 @@ describe('task_approve（对话内批准，主任拍板）', () => {
   })
 })
 
-describe('task_claim（对话内认领执行，主任拍板）', () => {
+describe('task_claim（对话内认领执行，主人拍板）', () => {
   async function registerClaimTool(): Promise<{ execute: (args: unknown, exec?: unknown) => Promise<unknown> }> {
     const registered = new Map<string, { execute: (args: unknown, exec?: unknown) => Promise<unknown> }>()
     const mod = await import('../src/tools.ts')
@@ -369,7 +369,7 @@ describe('启动对账（settleOrphanedRuns）', () => {
     return claim
   }
 
-  it('自动归档：已完成满 7 天归档；已失败/待办永不自动归档（P1 主任拍板）', async () => {
+  it('自动归档：已完成满 7 天归档；已失败/待办永不自动归档（P1 主人拍板）', async () => {
     const { createTask: ct, transact: tx, loadBoard: lb } = await import('../src/ledger.ts')
     const done = ct({ title: '【测试】完成8天', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
     const doneFresh = ct({ title: '【测试】完成1天', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })

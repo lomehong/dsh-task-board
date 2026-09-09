@@ -1,8 +1,8 @@
 /**
- * 任务记忆沉淀测试（决策五「记忆是经验积累」+ 主任拍板的验收语义：
+ * 任务记忆沉淀测试（决策五「记忆是经验积累」+ 主人拍板的验收语义：
  * 分身自报 ≠ 完成，主人确认才是完成）：
  * - task_report → 运行进入「待确认」（非终态），不自报即完成；
- * - 主任确认（confirmTaskResult）→ 落定终态 + 「已验证结果」记忆沉淀；
+ * - 主人确认（confirmTaskResult）→ 落定终态 + 「已验证结果」记忆沉淀；
  * - dsh-memory 缺席 / 写入失败都不影响看板状态（显式降级，宪章 §3.2）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -40,8 +40,8 @@ function seedRunningTask(): string {
   return t.id
 }
 
-describe('任务记忆沉淀（自报 → 待确认 → 主任确认）', () => {
-  it('自报后进入「待确认」，主任确认后落定终态并沉淀「已验证结果」记忆', async () => {
+describe('任务记忆沉淀（自报 → 待确认 → 主人确认）', () => {
+  it('自报后进入「待确认」，主人确认后落定终态并沉淀「已验证结果」记忆', async () => {
     const calls: Array<Record<string, unknown>> = []
     injectMemoryGetter(() => ({
       addMemoryEntry: (entry) => { calls.push(entry as Record<string, unknown>); return Promise.resolve({}) },
@@ -50,7 +50,7 @@ describe('任务记忆沉淀（自报 → 待确认 → 主任确认）', () => 
     const r = reportTaskResult(tid, { status: '成功', summary: '本周汇总完成', sessionId: 'session-test-1' })
     expect(r.ok).toBe(true)
     expect(r.task?.lastStatus).toBe('待确认')
-    // 自报阶段不写记忆（等主任确认）
+    // 自报阶段不写记忆（等主人确认）
     expect(calls.length).toBe(0)
     const c = confirmTaskResult(tid, true)
     expect(c.ok).toBe(true)
@@ -71,7 +71,7 @@ describe('任务记忆沉淀（自报 → 待确认 → 主任确认）', () => 
     expect(board.column).toBe('已完成')
   })
 
-  it('主任驳回：自报结果被判失败', async () => {
+  it('主人驳回：自报结果被判失败', async () => {
     const tid = seedRunningTask()
     reportTaskResult(tid, { status: '成功', summary: '自报成功', sessionId: 'session-test-1' })
     const c = confirmTaskResult(tid, false)
