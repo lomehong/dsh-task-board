@@ -24,7 +24,6 @@
       "default": "./lib/tools.js"
     },
     "./client": {
-      "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
     "./client.js": "./lib/client.js"
