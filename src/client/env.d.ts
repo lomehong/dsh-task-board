@@ -27,6 +27,14 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
     }
   }
 }
+// alpha.2 新增 slot 的 SlotMap 增强（官方契约：ui-layout main + ui-sidebar panellist）。
+// 宿主仍在 alpha.1 时这两键不存在于运行时——注册代码用特性检测守卫，双写安全。
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMap {
+    main: { kind: 'keyed'; scope: 'root' }
+    'sidebar.panellist': { kind: 'list'; scope: 'root' }
+  }
+}
 declare namespace React {
   type CSSProperties = Record<string, string | number | undefined>
   interface ChangeEvent { target: { value: string }; stopPropagation(): void }

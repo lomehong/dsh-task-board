@@ -462,4 +462,38 @@ export function apply(ctx: ClientContext): void {
       BoardPage,
     ),
   )
+  // alpha.2 全局面板（特性检测双写）：宿主具备 main/sidebar.panellist slot 时，
+  // 任务看板同时挂为侧边栏全局面板。alpha.1 无此 slot，静默跳过，零副作用。
+  // 新 API 的注册选项在 alpha.1 时代的类型联合里不存在——用显式边界转换，
+  // 运行时校验由 alpha.2 宿主完成。
+  const slots = ctx.slots as ClientContext['slots'] & { spec?: (name: string) => unknown }
+  if (typeof slots.spec !== 'function') return
+  try {
+    const registerNew = slots.register as unknown as (slot: Record<string, unknown>, component: unknown) => void
+    if (slots.spec('main') !== undefined) {
+      ctx.slots.inject('main', () =>
+        registerNew({ name: 'main', key: 'task-board' }, BoardPage),
+      )
+    }
+    if (slots.spec('sidebar.panellist') !== undefined) {
+      ctx.slots.inject('sidebar.panellist', () =>
+        registerNew(
+          { name: 'sidebar.panellist', id: 'task-board', order: 22, label: () => '任务看板' },
+          ({ size, active }: { size: number; active: boolean }) => boardIcon(size, active),
+        ),
+      )
+    }
+  } catch { /* 新 API 不可用时静默回退旧注册 */ }
+}
+
+/** 侧边栏面板图标（任务看板：三列板），active 时用业务主色。 */
+function boardIcon(size: number, active: boolean): JSX.Element {
+  const color = active ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-secondary)'
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="3" y="4" width="5" height="16" rx="1.2" stroke={color} strokeWidth="2" />
+      <rect x="10" y="4" width="5" height="10" rx="1.2" stroke={color} strokeWidth="2" />
+      <rect x="17" y="4" width="4" height="13" rx="1.2" stroke={color} strokeWidth="2" />
+    </svg>
+  )
 }
