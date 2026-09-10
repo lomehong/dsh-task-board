@@ -1,0 +1,39 @@
+schema: 1
+status: 待审核
+services:
+  - name: dsh-task-board
+    kind: cordis-service
+    summary: 只读活动服务，仅暴露 activity()（返回 tick 每 15s 刷新的活动视图缓存，同步读取）；安全审计 M-3 故意不暴露 state()——完整状态只经同源 HTTP 供浏览器
+    source: src/index.ts:apply
+  - name: GET /dsh-task-board/state
+    kind: http
+    summary: 完整状态快照（tasks+revision+scheduler.lastTickAt+governance.mode 账本/本地），客户端治理徽标与面板数据源
+    source: src/service.ts:state
+  - name: POST /dsh-task-board/action
+    kind: http
+    summary: 动作分发 type=create/update/archive/delete/run/claim/confirm；非 POST 或跨源（sameOrigin 校验）一律 403，请求体上限 128KB
+    source: src/index.ts:handleAction
+  - name: task_delegate
+    kind: model-tool
+    summary: 对话内立项（createWithGovernance 预裁决落账本 digest，可 run_now 立即执行）；关键词地板 v2——破坏性措辞强制 L3、对外发布且申报 L0/L1 强制 L2
+    source: src/tools.ts:task_delegate
+  - name: task_claim
+    kind: model-tool
+    summary: 把当前会话绑定为任务执行现场（不派发新会话，inline 干活）；认领即治理裁决；同会话重复认领报已阻断；旧运行中现场被新会话接管取消并留审计
+    source: src/service.ts:claim
+  - name: task_report
+    kind: model-tool
+    summary: 分身自报结果（status 成功/失败 + summary）→ 运行进「待确认」非终态，任务保持进行中；防伪造以宿主注入 exec.agent.id 比对执行会话，不一致允许接管但摘要留痕
+    source: src/report.ts:reportTaskResult
+  - name: task_approve
+    kind: model-tool
+    summary: 主人批准双路径——「待确认」自报→确认落定终态；「待审批」令牌→经 dsh-ledger pendingApprovals/approve 放行并自动重跑；防自批：非 claimed 且会话即执行会话一律拒绝
+    source: src/tools.ts:task_approve
+  - name: 任务看板客户端
+    kind: client-panel
+    summary: conversation.view(order 22「任务看板」Tab) + alpha.2 main/sidebar.panellist 特性检测双写；数据面 fetch 宿主 HTTP（credentials include）
+    source: src/client/index.tsx:apply
+gaps:
+  - 本仓无事件（event）注册与订阅，未发现 ctx.on 或事件面代码，故无 event 条目
+  - src/index.ts 对 webServer 无 effect API 的回退分支（直接 register 不可卸载）与 effect 分支并存，宿主实际走哪支未在运行时验证
+  - im-channel 服务接口按 index.ts:injectNotifier 内联结构视图（botsStatus/pushToUser）转述，未读 im-channel 仓源码

@@ -1,0 +1,39 @@
+schema: 1
+status: 待审核
+consumes:
+  - name: dsh-ledger
+    kind: cordis-service
+    degradation: 缺席走本地降级 adjudicateLocal——L0/L1 放行并标注「无账本治理」、L2 拦截+尽力通知主人、L3 拒绝（任务保留待办列，装回账本即恢复审批流）
+    source: src/index.ts:injectLedgerGetter
+  - name: dsh-memory
+    kind: cordis-service
+    degradation: 缺席 WARN 一次后跳过沉淀；写入失败仅 console.warn，绝不影响看板终态
+    source: src/memory.ts:recordTaskOutcome
+  - name: im-channel
+    kind: cordis-service
+    degradation: 缺席/未绑定主人/推送失败一律静默跳过（通知是缓解措施不是闸门）；主人绑定跨渠道去重后上限 3 个目标
+    source: src/index.ts:injectNotifier
+  - name: typertGateway
+    kind: cordis-service
+    degradation: 硬依赖（default 导出 inject 声明）；launch 传输失败可按线性退避重试（缺省 0 次）；goal 播种失败降级为 turn/end 结算
+    source: src/gateway.ts:GatewayClient
+  - name: webServer
+    kind: cordis-service
+    degradation: ctx.inject 延迟注入；缺席仅 warn——HTTP 路由不注册，cron 调度与 tick 结算照常
+    source: src/index.ts:apply
+  - name: tools
+    kind: cordis-service
+    degradation: 鸭子类型探测（tools.register），缺席直接 return；逐工具 try/catch，注册失败跳过不炸会话创建
+    source: src/tools.ts:apply
+consumed_by:
+  - name: dsh-twin（活动区段）
+    source: dsh-twin/src/index.ts:injectBoardGetter
+  - name: dsh-twin（预设挂链）
+    source: dsh-twin/src/index.ts:taskBoardAvailable
+  - name: dsh-twin 客户端仪表盘
+    source: dsh-twin/src/client/dashboard.tsx:confirmRun
+gaps:
+  - dsh-twin 消费点系片段阅读（index.ts 行 485-524/1460-1489、activity.ts 行 1-60、dashboard.tsx 行 85-224），未通读两仓全文
+  - dsh-ledger/src/index.ts 仅有 grep 命中行证据（provide = ['dsh-ledger']，行 32-33/160），未通读其裁决实现
+  - consumed_by 检索范围限于 E:\Development\Code\nodejs\digital-twin 下 grep「dsh-task-board」，套件外仓未检索
+  - 任务线索提示 dsh-ledger/dsh-memory 为消费方，与代码方向相反（两仓内 grep 零引用，实为被本仓消费），本表以代码为准

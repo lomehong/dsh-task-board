@@ -1,0 +1,63 @@
+service: dsh-task-board
+domain: dsh-ecosystem
+role: 套件全局层任务中心化组件——Host 权威任务账本 + cron 调度 + 真实分身会话执行 + 账本裁决闭环，看板是全实例「活动」的唯一权威
+capabilities:
+  - name: 权威账本
+    desc: 任务与执行记录唯一事实源；ledger.json 临时文件+rename 原子写、revision 递增、每任务执行历史封顶 20 条、transact 同步串行防并发交错
+    source: src/ledger.ts:saveBoard
+  - name: cron 调度
+    desc: 五字段 cron 纯函数解析（步进/范围/逗号列表、日周标准 OR 语义、周日 0 与 7 等价）；分钟级 tick、lastMinuteKey 同分钟去重、错过不补跑
+    source: src/cron.ts:cronMatches
+  - name: 分身执行
+    desc: fail-closed 预设校验（固定 digital-twin，broken 拒发）→ session create/rename/prompt(mode=queue) 投递；L1/L2 播种原生 goal（2/3 轮预算），播种失败降级 turn/end 结算
+    source: src/runner.ts:launch
+  - name: 完成判定
+    desc: follow 短促订阅唤醒会话 + session/page 回溯 turn/end；goalSeeded 按 goal 相位结算、claimed 等 task_report；turn/end reason 白名单（aborted/interrupted→取消，error/blocked/max-tokens→失败）
+    source: src/runner.ts:inspect
+  - name: 治理裁决
+    desc: 执行前过 dsh-ledger L0-L3 裁决，阻断产生审批令牌（批准后重试放行）；账本缺席走本地降级策略；执行后 fillResult 回填账本留痕
+    source: src/governance.ts:adjudicate
+  - name: 验收闭环
+    desc: task_report 自报只进「待确认」，主人 confirm 落定终态并沉淀记忆；防伪造比对宿主注入的执行会话 id，会话更替走接管留痕
+    source: src/report.ts:confirmTaskResult
+  - name: 活动视图
+    desc: 看板=唯一活动权威：进行中执行现场、自由会话（≤8）、自由会话自主目标（≤3、objective 截断 40 字）、待审批、最近完成（≤5）；tick 每 15s 刷新缓存
+    source: src/service.ts:refreshActivity
+  - name: 模型工具
+    desc: task_report/task_delegate/task_claim/task_approve 四工具对话闭环；注册失败逐工具降级跳过
+    source: src/tools.ts:apply
+  - name: HTTP 看板面
+    desc: GET /dsh-task-board/state 完整快照 + POST /dsh-task-board/action（create/update/archive/delete/run/claim/confirm），同源 POST 防护、请求体 128KB 上限
+    source: src/index.ts:handleAction
+  - name: 客户端面板
+    desc: 看板/列表双视图、折叠卡片、搜索+级别筛选、含归档开关、治理徽标（账本/本地降级）；沉淀列只显最近 5 条
+    source: src/client/index.tsx:apply
+  - name: 记忆沉淀
+    desc: 任务落定终态写 dsh-memory「已验证结果」（成败都写）；缺席 WARN 一次显式降级，不影响看板终态
+    source: src/memory.ts:recordTaskOutcome
+schema: 1
+status: 待审核
+confirmed: '2026-09-10'
+sources:
+  - README.md
+  - package.json
+  - src/index.ts
+  - src/service.ts
+  - src/ledger.ts
+  - src/governance.ts
+  - src/report.ts
+  - src/tools.ts
+  - src/runner.ts
+  - src/gateway.ts
+  - src/scheduler.ts
+  - src/cron.ts
+  - src/goals.ts
+  - src/memory.ts
+  - src/prompt.ts
+  - src/client/index.tsx
+gaps:
+  - tests/ 下 6 份 spec（cron/ledger/goals/activity/memory/service）未通读，测试断言与实现一致性未核实
+  - dsh-ledger 的 check/approve/pendingApprovals/fillResult 完整契约仅按本仓 governance.ts:LedgerModule 结构视图转述，未读 dsh-ledger 源码全文
+  - dsh-memory 的 addMemoryEntry 完整契约同上（仅 memory.ts 最小结构视图）
+  - docs/suite-charter.md、docs/task-board-decisions.md 未通读，正文中的宪章条款均转引自代码注释
+  - scripts/build-client.mjs、scripts/audit-pack.mjs、docs/board-preview.html、.github/workflows、tsconfig*.json 未读

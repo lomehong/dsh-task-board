@@ -1,0 +1,51 @@
+schema: 1
+status: 待审核
+state_machines:
+  任务列:
+    states: [待规划, 待办, 进行中, 已完成, 已失败]
+    transitions:
+      - "创建任务 → 待办 (src/ledger.ts:createTask)"
+      - "run/claim 治理放行 → 进行中 (src/service.ts:recordRun)"
+      - "tick 结算 成功→已完成；失败→已失败；已取消→待办 (src/service.ts:tick)"
+      - "主人确认 确认→已完成；驳回→已失败 (src/report.ts:confirmTaskResult)"
+      - "待规划 仅能经 update 显式设置，无自动迁移路径 (src/ledger.ts:updateTask)"
+  执行记录:
+    states: [运行中, 成功, 失败, 已取消, 待审批, 已阻断, 待确认]
+    transitions:
+      - "run/claim 治理放行 → 运行中 (src/service.ts:run)"
+      - "账本裁决阻断 → 待审批（审批令牌在位时重试放行）(src/governance.ts:adjudicate)"
+      - "裁决拒绝或裁决异常 → 已阻断 (src/service.ts:run)"
+      - "task_report 自报 → 待确认（非终态）(src/report.ts:reportTaskResult)"
+      - "主人确认 → 成功；驳回 → 失败 (src/report.ts:confirmTaskResult)"
+      - "tick inspect → 成功/失败/已取消；goalSeeded 时以 goal 相位结算 (src/runner.ts:inspect)"
+      - "宿主重启对账与滞留超 6 小时强制取消 → 已取消 (src/service.ts:settleOrphanedRuns)"
+      - "claim 会话接管：旧运行中记录 → 已取消（审计留痕）(src/service.ts:claim)"
+  自动归档:
+    - "已完成且 updatedAt 满 7 天 → archived=true；已失败/待办永不自动归档 (src/service.ts:ARCHIVE_AFTER_MS)"
+red_lines:
+  - "自报≠完成：task_report 只进「待确认」，主人 confirm 才落定终态并沉淀记忆 (src/report.ts:reportTaskResult)"
+  - "防自批：task_approve 不得批准当前会话自己执行现场产生的审批/自报，主人认领（claimed）除外 (src/tools.ts:task_approve)"
+  - "session id 变化走接管语义：claim 取消旧现场留审计；report 允许接管绑定但摘要留痕，真防线是主人确认 (src/report.ts:reportTaskResult)"
+  - "服务面最小投影：provide('dsh-task-board') 故意不暴露 state()（安全审计 M-3），完整状态只经同源 HTTP (src/index.ts:apply)"
+  - "HTTP action 仅接受同源 POST，跨源 403；请求体上限 128KB (src/index.ts:readBody)"
+  - "治理缺席不扩权：本地降级 L2 拦截+尽力通知、L3 拒绝 (src/governance.ts:adjudicateLocal)"
+  - "关键词地板 v2：task_delegate 破坏性措辞强制 L3、对外发布且申报 L0/L1 强制 L2 (src/tools.ts:task_delegate)"
+  - "归档任务只读：先恢复再编辑/执行/调度 (src/ledger.ts:updateTask)"
+test_entry:
+  test: "npm test（vitest run），用例在 tests/ 下 6 份 spec：cron/ledger/goals/activity/memory/service"
+  typecheck: "npm run typecheck（tsc -b --noEmit）；npm run typecheck:client（tsc -p tsconfig.client.json）"
+compat_notes:
+  - "activityView 同步返回 tick（15s）缓存，消费方 systemPrompt 组装零网络等待 (src/service.ts:activityView)"
+  - "inject 必须挂 default 函数本体：loader 的 unwrapExports 取 .default 时丢命名导出 (src/index.ts:default)"
+  - "webServer 延迟注入；路由 disposer 经 web.effect 集中，宿主无 effect API 时直接 register (src/index.ts:apply)"
+  - "wire-args 硬约束：agentPresets/list 无参 {}、session/list 走 '_request' 键、其余走 'request' 键 (src/gateway.ts:wireArgs)"
+  - "工具输出不得含 undefined 属性（宿主 lossless JSON 校验整包拒收），只回传有值字段 (src/tools.ts:task_claim)"
+  - "客户端契约：命名导出 apply + inject:['slots']，勿改 default activate 形态（2026-09-05 自锁事故）(src/client/index.tsx:apply)"
+  - "alpha.2 双写：main/sidebar.panellist 经 slots.spec 特性检测注册，alpha.1 宿主静默跳过零副作用 (src/client/index.tsx:apply)"
+  - "调度只读预检：无命中绝不 transact，防空载重写、写放大与 revision 抖动 (src/scheduler.ts:collectDueTasks)"
+  - "跨进程无锁：勿以共享 DSH_HOME 并发运行多个会写看板的实例 (src/report.ts:reportTaskResult)"
+  - "存储 $DSH_HOME/dsh-task-board/ledger.json：临时文件+rename 原子写，坏文件改名 .corrupt-* 留证 (src/ledger.ts:loadBoard)"
+gaps:
+  - tick 内 stuck 兜底与 claim 接管、report 结算之间的并发时序仅有代码注释声明（Medium-1 覆盖竞态防护），未做运行时验证
+  - 宿主对 tools.register/ctx.provide/systemPrompt.section 的确切契约来自本仓用例与注释，未读宿主源码
+  - goal 播种的 goals/create 远程面契约（agentId+request 双参）仅见 goals.ts:goalCreateSpec，未读 @deepseek-ai/dsh-goal 包
