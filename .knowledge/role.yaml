@@ -36,7 +36,7 @@ capabilities:
     desc: 任务落定终态写 dsh-memory「已验证结果」（成败都写）；缺席 WARN 一次显式降级，不影响看板终态
     source: src/memory.ts:recordTaskOutcome
 schema: 1
-status: 待审核
+status: 已确认
 confirmed: '2026-09-10'
 sources:
   - README.md

@@ -1,5 +1,5 @@
 schema: 1
-status: 待审核
+status: 已确认
 consumes:
   - name: dsh-ledger
     kind: cordis-service

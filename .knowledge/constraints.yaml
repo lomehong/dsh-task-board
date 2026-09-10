@@ -1,5 +1,5 @@
 schema: 1
-status: 待审核
+status: 已确认
 state_machines:
   任务列:
     states: [待规划, 待办, 进行中, 已完成, 已失败]
