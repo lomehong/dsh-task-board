@@ -11,6 +11,7 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import { TaskBoardPluginConfig } from './PluginPage'
 
 export const inject = ['slots']
 
@@ -460,6 +461,13 @@ export function apply(ctx: ClientContext): void {
     ctx.slots.register(
       { name: 'conversation.view', id: 'task-board', order: 22, label: () => '任务看板' },
       BoardPage,
+    ),
+  )
+  // 「插件」管理页配置区：只读状态速览（概况/治理徽标/最近完成），完整操作在会话 Tab。
+  ctx.slots.inject('plugins.bundle.config', () =>
+    ctx.slots.register(
+      { name: 'plugins.bundle.config', key: '@dsh-extra/dsh-task-board' },
+      (props: { view: 'summary' | 'page' }) => TaskBoardPluginConfig({ view: props.view }),
     ),
   )
   // alpha.2 全局面板（特性检测双写）：宿主具备 main/sidebar.panellist slot 时，

@@ -23,7 +23,7 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
   interface ClientContext {
     slots: {
       inject(name: string, setup: () => void): void
-      register(slot: { name: string; id?: string; order?: number; label?: () => string }, component: unknown): void
+      register(slot: { name: string; id?: string; order?: number; label?: () => string; key?: string }, component: unknown): void
     }
   }
 }
@@ -33,6 +33,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     main: { kind: 'keyed'; scope: 'root' }
     'sidebar.panellist': { kind: 'list'; scope: 'root' }
+    // 插件管理页的 bundle 级配置区（client-ui-plugin-manager 契约）
+    'plugins.bundle.config': { kind: 'keyed'; scope: 'root' }
   }
 }
 declare namespace React {
