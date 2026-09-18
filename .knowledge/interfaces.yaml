@@ -31,7 +31,7 @@ services:
     source: src/tools.ts:task_approve
   - name: 任务看板客户端
     kind: client-panel
-    summary: conversation.view(order 22「任务看板」Tab) + alpha.2 main/sidebar.panellist 特性检测双写；数据面 fetch 宿主 HTTP（credentials include）
+    summary: conversation.view(order 22「任务看板」Tab) + alpha.2 main/sidebar.panellist 特性检测双写；数据面 fetch 宿主 HTTP（credentials include）；另有插件页配置区（plugins.bundle.config）只读状态速览（概况/治理徽标/最近完成），PluginPage.tsx
     source: src/client/index.tsx:apply
 gaps:
   - 本仓无事件（event）注册与订阅，未发现 ctx.on 或事件面代码，故无 event 条目

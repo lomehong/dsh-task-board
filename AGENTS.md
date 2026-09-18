@@ -10,7 +10,7 @@ src/ 结构速览：
 - runner.ts + gateway.ts + prompt.ts + goals.ts：分身投递与完成判定、typertGateway 封装、投递提示词、goal 播种/折叠
 - governance.ts + report.ts + memory.ts：L0-L3 裁决与本地降级、自报/主人确认、记忆沉淀
 - tools.ts：模型工具 task_report / task_delegate / task_claim / task_approve
-- client/index.tsx：客户端看板面板（conversation.view + main/sidebar.panellist 双写）
+- client/index.tsx + client/PluginPage.tsx：客户端看板面板（conversation.view + main/sidebar.panellist 双写）+ 插件页配置区（plugins.bundle.config，只读状态速览）
 
 .knowledge/ 索引：
 - role.yaml：仓角色定位与能力清单（带 source）
