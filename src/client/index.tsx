@@ -112,6 +112,39 @@ function api<T>(path: string, body?: unknown): Promise<T> {
   return fetch(path, opts).then((r) => r.json() as Promise<T>)
 }
 
+/** 页内通知（替代 window.alert——桌面壳把 alert 路由到 Tauri dialog 插件，
+ *  capability ACL 未放行会抛 not allowed by ACL，反馈丢失）。 */
+export function boardNotify(message: string): void {
+  window.dispatchEvent(new CustomEvent('dsh-task-board:notify', { detail: message }))
+}
+
+function BoardToasts(): JSX.Element {
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string }>>([])
+  useEffect(() => {
+    let id = 0
+    const onNotify = (e: Event): void => {
+      const message = (e as CustomEvent<string>).detail
+      const entry = { id: ++id, message }
+      setToasts(prev => [...prev, entry])
+      setTimeout(() => setToasts(prev => prev.filter(t => t.id !== entry.id)), 6000)
+    }
+    window.addEventListener('dsh-task-board:notify', onNotify)
+    return () => window.removeEventListener('dsh-task-board:notify', onNotify)
+  }, [])
+  if (toasts.length === 0) return <></>
+  return (
+    <div style={{ position: 'fixed', bottom: 18, right: 18, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 999 }}>
+      {toasts.map(t => (
+        <div key={t.id} style={{
+          maxWidth: 420, padding: '10px 14px', borderRadius: 10, fontSize: 13, lineHeight: 1.5,
+          background: 'var(--dsw-alias-bg-layer-2, #fff)', color: 'var(--dsw-alias-label-primary, #222)',
+          border: '1px solid var(--dsw-alias-border-l1, #ddd)', boxShadow: '0 6px 18px rgba(0,0,0,.14)',
+        }}>{t.message}</div>
+      ))}
+    </div>
+  )
+}
+
 function levelStyle(level: string): React.CSSProperties {
   if (level === 'L2' || level === 'L3') return s.levelErr
   if (level === 'L1') return s.levelWarn
@@ -148,7 +181,7 @@ function BoardPage() {
 
   const action = useCallback(async (type: string, body: Record<string, unknown>) => {
     const d = await api<{ ok: boolean; error?: string }>('/dsh-task-board/action', { type, ...body })
-    if (!d.ok) alert(d.error ?? '操作失败')
+    if (!d.ok) boardNotify(d.error ?? '操作失败')
     await load()
     return d
   }, [load])
@@ -209,7 +242,7 @@ function BoardPage() {
               // 执行结果反馈（审计 UX L-2）：治理拦截/待审批不再静默无响应
               const run = (d as { run?: { status?: string; summary?: string } }).run
               if (run && (run.status === '已阻断' || run.status === '待审批')) {
-                window.alert(`${run.status}：${run.summary ?? '该任务需要主人批准后才会执行（可在今日待办批准）'}`)
+                boardNotify(`${run.status}：${run.summary ?? '该任务需要主人批准后才会执行（可在今日待办批准）'}`)
               }
             })}>▶ 执行</button>
           )}
@@ -325,6 +358,7 @@ function BoardPage() {
 
   return (
     <div style={s.wrap}>
+      <BoardToasts />
       <div style={s.head}>
         <h1 style={s.h}>任务看板</h1>
         {state.governance?.mode === '本地' ? (
@@ -405,7 +439,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
       type: 'create',
       task: { title, prompt, actionType, targetScope, actionLevel, ...(cron.trim() !== '' ? { cron } : {}) },
     })
-    if (!d.ok) { alert(d.error ?? '创建失败'); return }
+    if (!d.ok) { boardNotify(d.error ?? '创建失败'); return }
     onClose()
     onCreated()
   }
@@ -505,3 +539,4 @@ function boardIcon(size: number, active: boolean): JSX.Element {
     </svg>
   )
 }
+
