@@ -1,10 +1,12 @@
 /**
- * 任务看板客户端（v0.2）：看板/列表双视图 + 折叠卡片 + 沉淀列收纳 + 搜索筛选 +
+ * 任务看板客户端（v0.3）：看板/列表双视图 + 详情弹窗 + 沉淀列收纳 + 搜索筛选 +
  * 含归档开关 + 自动归档（服务端：已完成满 7 天归档，本客户端提供「含归档」查看）。
  *
  * 呈现原则（主人拍板的 P1+P2）：看板永远只呈现「当前要关心的活」——
- * 卡片默认折叠（点标题展开 prompt）、沉淀列只显示最近 5 条、已完成满 7 天
- * 自动归档；任务量大时切「列表」视图（表格 + 排序 + 分页）全局检索。
+ * 卡片保持紧凑（点卡片弹圆角详情卡：全量字段 + 运行历史 + 阶段动作），
+ * 沉淀列只显示最近 5 条、已完成满 7 天自动归档；任务量大时切「列表」视图
+ * （表格 + 排序 + 分页）全局检索。v0.2 的原地展开交互废除——列内长卡会
+ * 把整条泳道撑变形（2026-09-23 主人反馈）。
  *
  * 数据面走宿主 HTTP：GET /dsh-task-board/state / POST /dsh-task-board/action
  * （sameOrigin 防护已在服务端处理，浏览器只做带 cookie 拉取）。
@@ -72,7 +74,23 @@ const s: Record<string, React.CSSProperties> = {
   card: { background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 10, padding: '10px 12px', marginBottom: 8, color: 'var(--dsw-alias-label-primary)' },
   cardArchived: { opacity: 0.62 },
   cardTitleRow: { display: 'flex', alignItems: 'flex-start', gap: 6, cursor: 'pointer' as const },
-  caret: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11, flexShrink: 0, marginTop: 2 },
+  detailBtn: { marginLeft: 'auto', flexShrink: 0, border: 'none', background: 'transparent', color: 'var(--dsw-alias-label-tertiary)', fontSize: 11.5, cursor: 'pointer', padding: '0 2px' },
+  detailModalBox: { background: 'var(--dsw-alias-bg-layer-1)', borderRadius: 16, padding: '20px 24px', maxWidth: 660, width: '92%', maxHeight: '88vh', overflow: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.28)' },
+  detailHead: { display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 },
+  detailTitle: { fontSize: 16.5, fontWeight: 700, flex: 1, margin: 0, color: 'var(--dsw-alias-label-primary)', lineHeight: 1.4 },
+  detailClose: { border: 'none', background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)', width: 26, height: 26, borderRadius: 8, fontSize: 14, cursor: 'pointer', flexShrink: 0, lineHeight: 1 },
+  detailMeta: { display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 12 },
+  detailMetaItem: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-2)', borderRadius: 6, padding: '3px 8px' },
+  detailLabel: { fontSize: 12, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)', margin: '14px 0 6px' },
+  detailPrompt: { background: 'var(--dsw-alias-bg-layer-2)', borderRadius: 10, padding: '10px 12px', fontSize: 12.5, lineHeight: 1.65, color: 'var(--dsw-alias-label-primary)', whiteSpace: 'pre-wrap' as const, maxHeight: 260, overflowY: 'auto' as const },
+  runItem: { borderLeft: '2px solid var(--dsw-alias-border-l2)', padding: '4px 0 4px 10px', marginBottom: 8 },
+  runHead: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: 'var(--dsw-alias-label-tertiary)', flexWrap: 'wrap' as const },
+  runSummary: { fontSize: 12.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55, marginTop: 3, whiteSpace: 'pre-wrap' as const },
+  runOk: { color: 'var(--dsw-alias-state-success-primary)', fontWeight: 600 },
+  runWarn: { color: 'var(--dsw-alias-state-warn-primary)', fontWeight: 600 },
+  runErr: { color: 'var(--dsw-alias-state-error-primary)', fontWeight: 600 },
+  runIdle: { color: 'var(--dsw-alias-label-secondary)', fontWeight: 600 },
+  emptyRuns: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', padding: '6px 0' },
   cardTitle: { fontWeight: 600, fontSize: 13.5, flex: 1 },
   cardMeta: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11.5, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' as const, margin: '4px 0 6px' },
   cardDesc: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12.5, lineHeight: 1.55, whiteSpace: 'pre-wrap' as const, marginBottom: 6 },
@@ -168,7 +186,9 @@ function BoardPage() {
   const [query, setQuery] = useState('')
   const [levelFilter, setLevelFilter] = useState<'全部' | TaskRecord['actionLevel']>('全部')
   const [showArchived, setShowArchived] = useState(false)
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  // 详情弹窗（v0.3 交互）：看板/列表点卡片都弹圆角详情卡；按 id 引用 state 内任务，
+  // 动作（执行/归档）触发 load() 后弹窗内容随最新状态刷新。
+  const [detailId, setDetailId] = useState<string | null>(null)
   const [settledExpanded, setSettledExpanded] = useState<Record<string, boolean>>({})
   const [listPage, setListPage] = useState(1)
   const [listDesc, setListDesc] = useState(true)
@@ -185,10 +205,6 @@ function BoardPage() {
     await load()
     return d
   }, [load])
-
-  const toggleExpand = useCallback((id: string) => {
-    setExpanded(prev => ({ ...prev, [id]: !prev[id] }))
-  }, [])
 
   if (state === null) {
     return <div style={s.wrap}><div style={s.sub}>加载任务看板中…</div></div>
@@ -212,13 +228,16 @@ function BoardPage() {
   const pageRows = listRows.slice((safePage - 1) * LIST_PAGE_SIZE, safePage * LIST_PAGE_SIZE)
 
   const renderCard = (t: TaskRecord, opts: { archived?: boolean } = {}): JSX.Element => {
-    const isOpen = expanded[t.id] === true
-    const lastRun = t.runs.length > 0 ? t.runs[t.runs.length - 1] : undefined
     return (
-      <div key={t.id} style={{ ...s.card, ...(opts.archived === true ? s.cardArchived : {}) }}>
-        <div style={s.cardTitleRow} onClick={() => toggleExpand(t.id)}>
-          <span style={s.caret}>{isOpen ? '▾' : '▸'}</span>
+      <div
+        key={t.id}
+        style={{ ...s.card, ...(opts.archived === true ? s.cardArchived : {}), cursor: 'pointer' }}
+        onClick={() => setDetailId(t.id)}
+        title="点击查看详情"
+      >
+        <div style={s.cardTitleRow}>
           <span style={s.cardTitle}>{t.title}</span>
+          <span style={s.detailBtn}>详情 ›</span>
         </div>
         <div style={s.cardMeta}>
           <span style={levelStyle(t.actionLevel)}>{t.actionLevel}</span>
@@ -226,16 +245,7 @@ function BoardPage() {
           {t.lastStatus !== undefined ? <span>· {t.lastStatus}</span> : null}
           {opts.archived === true ? <span>· 已归档</span> : null}
         </div>
-        {isOpen && (
-          <div style={s.cardDetail}>
-            <div style={s.cardDesc}>{t.prompt}</div>
-            <div style={s.cardDetailLine}>任务号 {t.id} · 更新于 {fmtTime(t.updatedAt)}</div>
-            {lastRun?.summary !== undefined && lastRun.summary !== '' && (
-              <div style={s.cardDetailLine}>最近结果：{lastRun.summary}</div>
-            )}
-          </div>
-        )}
-        <div style={s.cardActions}>
+        <div style={{ ...s.cardActions }} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
           {/* 按钮跟随任务阶段（主人反馈）：已完成/进行中不显示执行；进行中不显示归档 */}
           {t.column !== '已完成' && t.column !== '进行中' && (
             <button style={s.btn2} onClick={() => void action('run', { id: t.id }).then((d) => {
@@ -305,41 +315,27 @@ function BoardPage() {
             </tr>
           </thead>
           <tbody>
-            {pageRows.map(t => {
-              const isOpen = expanded[`list:${t.id}`] === true
-              const lastRun = t.runs.length > 0 ? t.runs[t.runs.length - 1] : undefined
-              return (
-                <>
-                  <tr key={t.id}>
-                    <td style={s.td}>{t.id}</td>
-                    <td style={{ ...s.td, ...s.tdTitle }}>
-                      <span style={{ ...s.cardTitleRow }} onClick={() => setExpanded(prev => ({ ...prev, [`list:${t.id}`]: !prev[`list:${t.id}`] }))}>
-                        {t.title}
-                      </span>
-                    </td>
-                    <td style={s.td}><span style={levelStyle(t.actionLevel)}>{t.actionLevel}</span></td>
-                    <td style={s.td}>{t.lastStatus ?? '—'}</td>
-                    <td style={s.td}>{t.column}</td>
-                    <td style={s.tdTime}>{fmtTime(t.updatedAt)}</td>
-                    <td style={s.td}>
-                      <div style={s.cardActions}>
-                        {t.column !== '已完成' && t.column !== '进行中' && <button style={s.btn2} onClick={() => void action('run', { id: t.id })}>▶</button>}
-                        {t.column === '进行中' && <span style={s.runningHint}>执行中…</span>}
-                        {t.column !== '进行中' && <button style={s.btn2} onClick={() => void action('archive', { id: t.id, task: { archived: !t.archived } })}>{t.archived === true ? '恢复' : '归档'}</button>}
-                      </div>
-                    </td>
-                  </tr>
-                  {isOpen && (
-                    <tr key={`${t.id}-detail`}>
-                      <td style={s.td} colSpan={7}>
-                        <div style={s.cardDesc}>{t.prompt}</div>
-                        <div style={s.cardDetailLine}>最近结果：{lastRun?.summary ?? '（无）'}</div>
-                      </td>
-                    </tr>
-                  )}
-                </>
-              )
-            })}
+            {pageRows.map(t => (
+              <tr key={t.id}>
+                <td style={s.td}>{t.id}</td>
+                <td style={{ ...s.td, ...s.tdTitle }}>
+                  <span style={{ ...s.cardTitleRow }} onClick={() => setDetailId(t.id)}>
+                    {t.title}
+                  </span>
+                </td>
+                <td style={s.td}><span style={levelStyle(t.actionLevel)}>{t.actionLevel}</span></td>
+                <td style={s.td}>{t.lastStatus ?? '—'}</td>
+                <td style={s.td}>{t.column}</td>
+                <td style={s.tdTime}>{fmtTime(t.updatedAt)}</td>
+                <td style={s.td}>
+                  <div style={s.cardActions} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                    {t.column !== '已完成' && t.column !== '进行中' && <button style={s.btn2} onClick={() => void action('run', { id: t.id })}>▶</button>}
+                    {t.column === '进行中' && <span style={s.runningHint}>执行中…</span>}
+                    {t.column !== '进行中' && <button style={s.btn2} onClick={() => void action('archive', { id: t.id, task: { archived: !t.archived } })}>{t.archived === true ? '恢复' : '归档'}</button>}
+                  </div>
+                </td>
+              </tr>
+            ))}
             {pageRows.length === 0 && (
               <tr><td style={s.td} colSpan={7}><div style={s.empty}>没有匹配的任务</div></td></tr>
             )}
@@ -422,6 +418,16 @@ function BoardPage() {
       )}
 
       {showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); void load() }} />}
+      {detailId !== null && (() => {
+        const task = state.tasks.find(t => t.id === detailId)
+        return task === undefined ? null : (
+          <TaskDetailModal
+            task={task}
+            onAction={(type, body) => action(type, body)}
+            onClose={() => setDetailId(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
@@ -480,6 +486,109 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
         <div style={s.modalActions}>
           <button style={s.btn2} onClick={onClose}>取消</button>
           <button style={s.btn} disabled={title.trim() === '' || prompt.trim() === ''} onClick={() => void submit()}>创建</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 运行状态 → 语义色。 */
+function runStatusStyle(status: string): React.CSSProperties {
+  if (status === '已完成' || status === '成功') return s.runOk
+  if (status === '待审批' || status === '待确认') return s.runWarn
+  if (status === '已阻断' || status === '已失败' || status === '失败') return s.runErr
+  return s.runIdle
+}
+
+/**
+ * 任务详情弹窗（v0.3 交互，主人拍板）：点看板/列表卡片弹出圆角详情卡，
+ * 替代 v0.2 的原地展开——泳道内长卡会把整列撑变形。展示全量字段、执行
+ * 提示词、运行历史（最新在上），阶段动作（执行/归档/恢复）就地可用；
+ * 动作后 state 刷新，弹窗内容随之更新。ESC / 点遮罩关闭。
+ */
+function TaskDetailModal({ task, onAction, onClose }: {
+  task: TaskRecord
+  onAction: (type: string, body: Record<string, unknown>) => Promise<{ ok: boolean; error?: string; run?: unknown }>
+  onClose: () => void
+}): JSX.Element {
+  const lastRun = task.runs.length > 0 ? task.runs[task.runs.length - 1] : undefined
+  const runsDesc = [...task.runs].reverse().slice(0, 20)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const run = (): void => {
+    void onAction('run', { id: task.id }).then((d) => {
+      const r = (d as { run?: { status?: string; summary?: string } }).run
+      if (r && (r.status === '已阻断' || r.status === '待审批')) {
+        boardNotify(`${r.status}：${r.summary ?? '该任务需要主人批准后才会执行（可在今日待办批准）'}`)
+      }
+    })
+  }
+
+  return (
+    <div style={s.modal} onClick={onClose}>
+      <div style={s.detailModalBox} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+        <div style={s.detailHead}>
+          <h2 style={s.detailTitle}>{task.title}</h2>
+          <button style={s.detailClose} onClick={onClose} title="关闭（Esc）">×</button>
+        </div>
+        <div style={s.detailMeta}>
+          <span style={{ ...s.detailMetaItem, fontWeight: 700 }}>{task.column}</span>
+          <span style={levelStyle(task.actionLevel)}>{task.actionLevel}</span>
+          <span style={s.detailMetaItem}>{task.cron !== undefined && task.cron !== '' ? `⏰ ${task.cron}` : '一次性'}</span>
+          {task.lastStatus !== undefined ? <span style={s.detailMetaItem}>{task.lastStatus}</span> : null}
+          {task.archived === true ? <span style={s.detailMetaItem}>已归档</span> : null}
+        </div>
+        <div style={s.detailMeta}>
+          <span style={s.detailMetaItem}>任务号 {task.id}</span>
+          <span style={s.detailMetaItem}>{task.actionType} · {task.targetScope}</span>
+          {task.workspaceId !== undefined ? <span style={s.detailMetaItem}>工作区 {task.workspaceId}</span> : null}
+          <span style={s.detailMetaItem}>创建 {fmtTime(task.createdAt)}</span>
+          <span style={s.detailMetaItem}>更新 {fmtTime(task.updatedAt)}</span>
+        </div>
+
+        <div style={s.detailLabel}>执行提示词</div>
+        <div style={s.detailPrompt}>{task.prompt}</div>
+
+        {lastRun?.summary !== undefined && lastRun.summary !== '' && (
+          <>
+            <div style={s.detailLabel}>最近结果</div>
+            <div style={s.runSummary}>{lastRun.summary}</div>
+          </>
+        )}
+
+        <div style={s.detailLabel}>运行历史（{task.runs.length} 次，最新在上）</div>
+        {runsDesc.length === 0 ? (
+          <div style={s.emptyRuns}>尚未运行过。</div>
+        ) : (
+          runsDesc.map(r => (
+            <div key={r.id} style={s.runItem}>
+              <div style={s.runHead}>
+                <span style={runStatusStyle(r.status)}>{r.status}</span>
+                <span>{fmtTime(r.startedAt)}{r.finishedAt !== undefined ? ` → ${fmtTime(r.finishedAt)}` : ''}</span>
+                <span>{r.trigger}</span>
+                {r.sessionId !== undefined ? <span>会话 {r.sessionId.slice(0, 8)}…</span> : null}
+              </div>
+              {r.summary !== undefined && r.summary !== '' ? <div style={s.runSummary}>{r.summary}</div> : null}
+            </div>
+          ))
+        )}
+
+        <div style={s.modalActions}>
+          {task.column !== '已完成' && task.column !== '进行中' && (
+            <button style={s.btn} onClick={run}>▶ 执行</button>
+          )}
+          {task.column === '进行中' && <span style={s.runningHint}>执行中…</span>}
+          {task.column !== '进行中' && (
+            <button style={s.btn2} onClick={() => void onAction('archive', { id: task.id, task: { archived: task.archived !== true } })}>
+              {task.archived === true ? '恢复' : '归档'}
+            </button>
+          )}
+          <button style={s.btn2} onClick={onClose}>关闭</button>
         </div>
       </div>
     </div>
