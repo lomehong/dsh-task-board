@@ -65,6 +65,18 @@ export const name = 'tool-task-board'
 export const inject = ['tools']
 
 export function apply(ctx: Context): void {
+  registerTaskTools(ctx)
+}
+
+/**
+ * 全模式注册（v0.3.0）：宿主 index.ts apply 直接调用——看板四件套工具
+ * （task_report / task_delegate / task_claim / task_approve）不再依赖预设行挂载，
+ * 任何 agent 预设（标准/PTC/极简/创造/数字分身）的会话都可获得（宪章 §0：
+ * 任务看板是实例级资产）。会话归属与调用方身份由宿主在 execute 注入的
+ * `exec.agent.id` 调用时解析（不可伪造），与注册方式无关。
+ * 注册失败降级为跳过：绝不让工具注册问题炸掉会话创建。
+ */
+export function registerTaskTools(ctx: Context): void {
   const host = ctx as unknown as { tools?: ToolsLike; get?(name: string): unknown }
   const tools = host.tools ?? (host.get?.('tools') as ToolsLike | undefined)
   if (tools === undefined || typeof tools.register !== 'function') return
