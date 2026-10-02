@@ -228,14 +228,35 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
     approvalEscalations.set(taskId, setTimeout(() => {
       approvalEscalations.delete(taskId)
       void (async () => {
-        // 在场门控：主人在电脑旁 → 控制台审批即可（IM 一个字都不发）
-        const mind = (() => {
-          try { return (ctx as unknown as { get(name: string): unknown }).get('dsh-mind') as { presenceState?: () => { strongest?: string } } | undefined } catch { return undefined }
-        })()
-        const strongest = mind?.presenceState?.().strongest
-        if (strongest === 'master-facing') {
-          log(`审批 ${taskId}：主人在电脑旁，走控制台（不推 IM）`)
-          return
+        // P1.5 升级判定（主人拍板：宁漏勿扰 + 离开沿触发）：90s 宽限后采样
+        // atComputer——true → 60s 重查（你在电脑旁，控制台审批即可）；false →
+        // 推批准/拒绝按钮卡（离开的瞬间才升级）；unknown（dsh-mind 缺席/旧版）
+        // → 10 分钟重判 ×3 后放弃，控制台待批徽标始终可用。
+        const samplePresence = (): { atComputer?: boolean; atComputerSource?: string } | undefined => {
+          try {
+            const mind = (ctx as unknown as { get(name: string): unknown }).get('dsh-mind') as { presenceState?: () => { atComputer?: boolean; atComputerSource?: string } } | undefined
+            return mind?.presenceState?.()
+          } catch { return undefined }
+        }
+        let unknownTries = 0
+        for (;;) {
+          const ps = samplePresence()
+          if (ps?.atComputer === true) {
+            log(`审批 ${taskId}：主人在场（${ps.atComputerSource ?? '?'}），60s 后重查（控制台审批即可）`)
+            await new Promise(resolve => setTimeout(resolve, 60_000))
+            continue
+          }
+          if (ps?.atComputer !== false) {
+            unknownTries += 1
+            if (unknownTries >= 3) {
+              log(`审批 ${taskId}：在场信号不可用（${unknownTries} 次未知），放弃 IM 升级——控制台待批`)
+              return
+            }
+            log(`审批 ${taskId}：在场信号未知（${unknownTries}/3），10 分钟后重判`)
+            await new Promise(resolve => setTimeout(resolve, 600_000))
+            continue
+          }
+          break
         }
         const im = getImChannel()
         if (im === undefined) return
