@@ -152,6 +152,19 @@ export declare class TaskBoardService {
         summary: string;
     }) => Promise<void> | void;
     private recordRun;
+    /** P1.5 IM 渠道批准（主人回复「同意 TB-x」）：与 tools.task_approve 待审批路径同语义——
+     *  账本令牌核销 + 自动重跑。调用者身份由 im-channel 路由保证（仅绑定主人消息触达）。 */
+    approveViaChannel(taskId: string, by?: string): Promise<{
+        ok: boolean;
+        grantId?: string;
+        runStatus?: string;
+        error?: string;
+    }>;
+    /** P1.5 IM 渠道驳回（主人回复「拒绝 TB-x」）：阻断运行记录落「已取消」，任务回待办可重发起。 */
+    rejectViaChannel(taskId: string, by?: string): {
+        ok: boolean;
+        error?: string;
+    };
     create(input: Parameters<typeof createTask>[0]): Promise<TaskRecord>;
     update(id: string, patch: Parameters<typeof updateTask>[1]): TaskRecord | undefined;
     archive(id: string, archived: boolean): TaskRecord | undefined;

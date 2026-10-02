@@ -154,6 +154,32 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
     }
   })
 
+  // P1.5：im-channel 惰性解析（可选依赖，宪章 §3.2）——优先 0.2.1+ 的
+  // masterTargets（未脱敏主人绑定，推送可达），退化为 botsStatus（0.2.0）。
+  interface ImChannelLike {
+    pushToUser(kind: string, userId: string, text: string, opts?: { markdown?: boolean }): Promise<boolean> | boolean
+    masterTargets?(): Array<{ kind: 'feishu' | 'wechat' | 'wecom'; userId: string }>
+    registerOwnerReplyInterceptor?(fn: (kind: 'feishu' | 'wechat' | 'wecom', ownerUserId: string, text: string) => boolean): () => void
+    botsStatus?(): Array<{ kind: string; bindings?: Array<{ isMaster?: boolean; userId?: string }> }>
+  }
+  const getImChannel = (): ImChannelLike | undefined => {
+    try {
+      return (ctx as unknown as { get(name: string): unknown }).get('im-channel') as ImChannelLike | undefined
+    } catch {
+      return undefined
+    }
+  }
+  const masterTargetsOf = (im: ImChannelLike): Array<{ kind: string; userId: string }> => {
+    if (typeof im.masterTargets === 'function') return im.masterTargets()
+    const out: Array<{ kind: string; userId: string }> = []
+    for (const bot of im.botsStatus?.() ?? []) {
+      for (const b of bot.bindings ?? []) {
+        if (b.isMaster === true && b.userId !== undefined) out.push({ kind: bot.kind, userId: b.userId })
+      }
+    }
+    return out
+  }
+
   // 1) service 立即组装 + 启动 cron tick（typertGateway 已通过 default 函数上的 inject 声明）
   const service = createService(ctx.typertGateway)
   service.logger = ctx.logger
@@ -179,6 +205,62 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
       return []
     }
   })
+
+  // P1.5 阻断式审批 → 主人 IM（governance-audit：批准权只在主人通道，但主人
+  // 不该被拴在电脑前）：run 落「待审批」即推送结构化审批卡到主人绑定渠道，
+  // 主人回复「同意/拒绝 TB-x」由下方拦截器直调治理面完成闭环（不经模型）。
+  // 推送失败静默——看板 UI 与主人会话的 task_approve 永远是兜底权威。
+  service.onPendingApproval = async ({ taskId, title, level, summary }) => {
+    const im = getImChannel()
+    if (im === undefined) return
+    const text = [
+      `🔐 任务审批 ${taskId}（${level}）`,
+      `标题：${title}`,
+      summary !== '' ? `要点：${summary.slice(0, 120)}` : undefined,
+      `回复「同意 ${taskId}」批准，「拒绝 ${taskId}」驳回`,
+    ].filter(l => l !== undefined).join('\n')
+    for (const t of masterTargetsOf(im)) {
+      try { await im.pushToUser(t.kind, t.userId, text, { markdown: true }) } catch { /* 单目标失败不阻断 */ }
+    }
+  }
+  // im-channel 载入次序无保证（可选依赖）：拦截器注册带重试（30s × 20 次后放弃）。
+  let interceptorTries = 0
+  const registerApprovalInterceptor = (): void => {
+    const im = getImChannel()
+    if (im?.registerOwnerReplyInterceptor === undefined) {
+      if (interceptorTries < 20) {
+        interceptorTries += 1
+        setTimeout(registerApprovalInterceptor, 30_000)
+      } else {
+        log('im-channel 拦截器注册放弃（服务 10 分钟内未就绪）——IM 审批降级为主人会话 task_approve')
+      }
+      return
+    }
+    im.registerOwnerReplyInterceptor((kind, ownerUserId, text) => {
+      const m = text.trim().match(/^(同意|批准|允许|拒绝|驳回)\s+(TB-[A-Za-z0-9-]+)\s*$/)
+      if (m === null) return false
+      const taskId = m[2]
+      void (async () => {
+        let feedback: string
+        if (m[1] === '拒绝' || m[1] === '驳回') {
+          const r = service.rejectViaChannel(taskId)
+          feedback = r.ok ? `🚫 已驳回 ${taskId}（任务回待办，可重新发起）` : `驳回失败：${r.error ?? '未知原因'}`
+        } else {
+          const r = await service.approveViaChannel(taskId)
+          feedback = r.ok ? `✅ 已批准 ${taskId}，任务已重跑（${r.runStatus ?? '已投递'}）` : `批准失败：${r.error ?? '未知原因'}`
+        }
+        const imNow = getImChannel()
+        if (imNow !== undefined) {
+          for (const t of masterTargetsOf(imNow)) {
+            try { await imNow.pushToUser(t.kind, t.userId, feedback, { markdown: true }) } catch { /* 静默 */ }
+          }
+        }
+      })()
+      return true
+    })
+    log('IM 审批拦截器已注册（同意/拒绝 TB-x 直调治理面，不经模型）')
+  }
+  registerApprovalInterceptor()
 
   // v0.3.0 全模式工具注册（宪章 §0：任务看板是实例级资产）：看板四件套
   // （task_report / task_delegate / task_claim / task_approve）直接在宿主

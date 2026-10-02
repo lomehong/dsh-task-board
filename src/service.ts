@@ -15,7 +15,7 @@
 import type { TypertGateway } from './gateway.ts'
 import { GatewayClient, sessionAddress } from './gateway.ts'
 import { TaskRunner } from './runner.ts'
-import { adjudicate, fillResult, ledgerAvailable } from './governance.ts'
+import { adjudicate, currentLedger, fillResult, ledgerAvailable } from './governance.ts'
 import { recordTaskOutcome } from './memory.ts'
 import { foldGoalFromRecords } from './goals.ts'
 import { loadBoard, saveBoard, transact, createTask, updateTask, setArchived, deleteTask, genId, MAX_RUNS_PER_TASK } from './ledger.ts'
@@ -570,6 +570,44 @@ export class TaskBoardService {
     return run
   }
 
+
+  /** P1.5 IM 渠道批准（主人回复「同意 TB-x」）：与 tools.task_approve 待审批路径同语义——
+   *  账本令牌核销 + 自动重跑。调用者身份由 im-channel 路由保证（仅绑定主人消息触达）。 */
+  async approveViaChannel(taskId: string, by = '主人IM'): Promise<{ ok: boolean; grantId?: string; runStatus?: string; error?: string }> {
+    const task = loadBoard().tasks.find(t => t.id === taskId && t.archived !== true)
+    if (task === undefined) return { ok: false, error: `任务不存在: ${taskId}` }
+    const blockedRun = [...task.runs].reverse().find(r => r.status === '待审批' && r.ledgerRecordId !== undefined)
+    if (blockedRun === undefined) return { ok: false, error: '该任务没有待审批的执行记录（可能已批准或令牌已过期）' }
+    const ledger = currentLedger()
+    if (ledger === undefined || typeof ledger.approve !== 'function' || typeof ledger.pendingApprovals !== 'function') {
+      return { ok: false, error: '账本服务不可用（dsh-ledger 未安装或未就绪）' }
+    }
+    const pending = (ledger.pendingApprovals() ?? []).find(p => p.recordId === blockedRun.ledgerRecordId)
+    if (pending === undefined) return { ok: false, error: '未找到待批准的审批令牌（可能已过期）——重新执行会生成新令牌' }
+    const r = (await ledger.approve(pending.id, { by, via: '审批卡片' })) as { ok?: boolean; grant?: { id?: string }; error?: string }
+    if (r?.ok !== true) return { ok: false, error: r?.error ?? '批准失败' }
+    const rerun = await this.run(taskId, '手动')
+    return { ok: true, grantId: String(r.grant?.id ?? ''), runStatus: String(rerun.status ?? '已投递') }
+  }
+
+  /** P1.5 IM 渠道驳回（主人回复「拒绝 TB-x」）：阻断运行记录落「已取消」，任务回待办可重发起。 */
+  rejectViaChannel(taskId: string, by = '主人IM'): { ok: boolean; error?: string } {
+    const task = loadBoard().tasks.find(t => t.id === taskId && t.archived !== true)
+    if (task === undefined) return { ok: false, error: `任务不存在: ${taskId}` }
+    const blockedRun = [...task.runs].reverse().find(r => r.status === '待审批')
+    if (blockedRun === undefined) return { ok: false, error: '该任务没有待审批的执行记录' }
+    transact((store: TaskBoardStore) => {
+      const t = store.tasks.find(x => x.id === taskId)
+      if (t === undefined) return
+      const idx = t.runs.findIndex(r => r.id === blockedRun.id)
+      if (idx >= 0) {
+        t.runs[idx] = { ...blockedRun, status: '已取消', finishedAt: new Date().toISOString(), summary: `${by} 驳回` }
+      }
+      t.lastStatus = '已取消'
+      t.updatedAt = new Date().toISOString()
+    })
+    return { ok: true }
+  }
   // ── 透传给路由层的 CRUD ──
   async create(input: Parameters<typeof createTask>[0]): Promise<TaskRecord> {
     return this.createWithGovernance(input)
