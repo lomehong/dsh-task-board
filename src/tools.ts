@@ -350,6 +350,7 @@ export function registerTaskTools(ctx: Context): void {
           }
           const r = confirmTaskResult(taskId, true, '主人会话确认')
           if (!r.ok) throw new Error(r.error ?? '确认失败')
+          try { (serviceGetter?.() as { markApprovalSettled?: (id: string) => void } | undefined)?.markApprovalSettled?.(taskId) } catch { /* 静默 */ }
           return { ok: true, task_id: taskId, action: '已确认完成', run_status: r.run?.status ?? '成功' }
         }
         const blockedRun = [...task.runs].reverse().find(r => r.status === '待审批' && r.ledgerRecordId !== undefined)
@@ -380,6 +381,7 @@ export function registerTaskTools(ctx: Context): void {
         if (r?.ok !== true) throw new Error(r?.error ?? '批准失败')
         const svc = serviceGetter?.()
         if (svc === undefined || typeof svc.run !== 'function') throw new Error('看板服务不可用（宿主未就绪）')
+        try { (svc as { markApprovalSettled?: (id: string) => void } | undefined)?.markApprovalSettled?.(taskId) } catch { /* 静默 */ }
         const rerun = await svc.run(taskId, '手动')
         return { ok: true, task_id: taskId, grant_id: String(r.grant?.id ?? ''), run_status: String(rerun.status ?? '已投递') }
       },

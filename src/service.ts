@@ -542,6 +542,14 @@ export class TaskBoardService {
   /** P1.5 阻断式审批推送（主人 IM 渠道）：run 落「待审批」时经此回调触达主人（task-board index.ts 注入；
    *  推送失败静默——看板 UI 与主人会话的 task_approve 永远是兜底权威）。 */
   onPendingApproval?: (info: { taskId: string; title: string; level: string; summary: string }) => Promise<void> | void
+  /** P1.5 审批结算通知（task-board index.ts 注入）：批准/驳回发生在任何通道时
+   *  取消尚未触发的 IM 升级（主人在控制台批了，卡片就不必再发）。 */
+  onApprovalSettled?: (taskId: string) => void
+
+  /** P1.5 任意通道批准/驳回完成后调用（取消未触发的 IM 升级）。 */
+  markApprovalSettled(taskId: string): void {
+    try { this.onApprovalSettled?.(taskId) } catch { /* 通知失败不影响主流程 */ }
+  }
 
   private recordRun(taskId: string, run: RunRecord, opts?: { failColumn?: boolean; keepColumn?: boolean }): RunRecord {
     transact((store: TaskBoardStore) => {
@@ -586,6 +594,7 @@ export class TaskBoardService {
     if (pending === undefined) return { ok: false, error: '未找到待批准的审批令牌（可能已过期）——重新执行会生成新令牌' }
     const r = (await ledger.approve(pending.id, { by, via: '审批卡片' })) as { ok?: boolean; grant?: { id?: string }; error?: string }
     if (r?.ok !== true) return { ok: false, error: r?.error ?? '批准失败' }
+    this.markApprovalSettled(taskId)
     const rerun = await this.run(taskId, '手动')
     return { ok: true, grantId: String(r.grant?.id ?? ''), runStatus: String(rerun.status ?? '已投递') }
   }
@@ -606,6 +615,7 @@ export class TaskBoardService {
       t.lastStatus = '已取消'
       t.updatedAt = new Date().toISOString()
     })
+    this.markApprovalSettled(taskId)
     return { ok: true }
   }
   // ── 透传给路由层的 CRUD ──

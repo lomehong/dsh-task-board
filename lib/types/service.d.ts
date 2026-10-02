@@ -151,6 +151,11 @@ export declare class TaskBoardService {
         level: string;
         summary: string;
     }) => Promise<void> | void;
+    /** P1.5 审批结算通知（task-board index.ts 注入）：批准/驳回发生在任何通道时
+     *  取消尚未触发的 IM 升级（主人在控制台批了，卡片就不必再发）。 */
+    onApprovalSettled?: (taskId: string) => void;
+    /** P1.5 任意通道批准/驳回完成后调用（取消未触发的 IM 升级）。 */
+    markApprovalSettled(taskId: string): void;
     private recordRun;
     /** P1.5 IM 渠道批准（主人回复「同意 TB-x」）：与 tools.task_approve 待审批路径同语义——
      *  账本令牌核销 + 自动重跑。调用者身份由 im-channel 路由保证（仅绑定主人消息触达）。 */

@@ -579,6 +579,17 @@ function TaskDetailModal({ task, onAction, onClose }: {
         )}
 
         <div style={s.modalActions}>
+          {/* P1.5 控制台就地审批（主人拍板：在电脑旁走控制台，不打扰 IM） */}
+          {lastRun?.status === '待审批' && (
+            <>
+              <button style={s.btn} onClick={() => void onAction('approve', { id: task.id }).then((d) => {
+                boardNotify(d.ok === true ? '✅ 已批准，任务已重跑' : `批准失败：${d.error ?? '未知原因'}`)
+              })}>✓ 批准</button>
+              <button style={s.btn2} onClick={() => void onAction('reject', { id: task.id }).then((d) => {
+                boardNotify(d.ok === true ? '🚫 已驳回，任务回待办' : `驳回失败：${d.error ?? '未知原因'}`)
+              })}>✕ 驳回</button>
+            </>
+          )}
           {task.column !== '已完成' && task.column !== '进行中' && (
             <button style={s.btn} onClick={run}>▶ 执行</button>
           )}
