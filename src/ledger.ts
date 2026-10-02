@@ -35,6 +35,8 @@ export interface RunRecord {
   goalSeeded?: boolean
   /** 会话认领执行（task_claim）：模型在调用会话 inline 干活，结算等 task_report */
   claimed?: boolean
+  /** P1.5 认领主体（governance-audit §4.2）：mind=心智唤醒会话（单飞+L0/L1 上限+不接管运行中现场），session=其他 */
+  claimedBy?: 'mind' | 'session'
   /** 分身自报的结果状态（待确认期间记录，主人确认后落定终态） */
   reportedStatus?: string
 }
@@ -55,6 +57,8 @@ export interface TaskRecord {
   /** 动作声明（账本裁决输入）：本任务的意图类型与目标范围 */
   actionType: string
   targetScope: string
+  /** P1.5 立项调用方会话 id（task_approve 防自批 v2 的判定依据；governance-audit F5/F6） */
+  originBy?: string
   /** 动作级别缺省 L1（需要主人圈定范围；L2/L3 意味着更高风险由主人显式调高） */
   actionLevel: 'L0' | 'L1' | 'L2' | 'L3'
   // ── 调度 ──
@@ -144,6 +148,8 @@ export interface CreateTaskInput {
   actionLevel?: unknown
   cron?: unknown
   workspaceId?: unknown
+  /** P1.5 立项调用方会话 id（task_approve 防自批 v2 判定依据；缺省=主人通道时代） */
+  originBy?: unknown
 }
 
 const str = (v: unknown, cap: number): string => (typeof v === 'string' ? v.trim().slice(0, cap) : '')
@@ -162,6 +168,7 @@ export function createTask(input: CreateTaskInput): TaskRecord {
     : 'L1'
   const cron = str(input.cron, 40) || undefined
   const workspaceId = str(input.workspaceId, 80) || undefined
+  const originBy = str(input.originBy, 80) || undefined
   const now = new Date().toISOString()
   const task: TaskRecord = {
     id: genId('TB'),
@@ -172,6 +179,7 @@ export function createTask(input: CreateTaskInput): TaskRecord {
     runs: [],
     ...(cron !== undefined ? { cron } : {}),
     ...(workspaceId !== undefined ? { workspaceId } : {}),
+    ...(originBy !== undefined ? { originBy } : {}),
   }
   transact((store) => { store.tasks.push(task) })
   return task

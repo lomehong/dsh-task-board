@@ -20,6 +20,8 @@ interface DelegateService {
         targetScope: string;
         actionLevel: 'L0' | 'L1' | 'L2' | 'L3';
         cron?: string;
+        /** P1.5 立项调用方会话 id（task_approve 防自批 v2 判定依据） */
+        originBy?: string;
     }): Promise<{
         id: string;
         title: string;
@@ -28,12 +30,16 @@ interface DelegateService {
         status?: string;
     }>;
     /** 会话认领执行（task_claim）：把调用会话绑定为执行现场，认领即治理裁决 */
-    claim(taskId: string, sessionId: string, trigger?: string): {
+    claim(taskId: string, sessionId: string, trigger?: string, opts?: {
+        claimedBy?: 'mind' | 'session';
+    }): {
         status?: string;
         sessionId?: string;
         summary?: string;
     };
 }
+/** 宿主 index.ts 注入（工具执行时惰性解析；governance-audit F6 防自批 v2 依赖）。 */
+export declare function injectMindSessionIds(getter: (() => string[]) | undefined): void;
 /** 注入看板服务获取器（宿主 index.ts apply 内接线；工具执行时惰性解析）。 */
 export declare function injectServiceGetter(getter: (() => DelegateService | undefined) | undefined): void;
 export declare const name = "tool-task-board";

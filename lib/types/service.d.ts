@@ -26,6 +26,8 @@ export interface ServiceOptions {
     retryBackoffMs?: number;
     /** 滞留兜底阈值毫秒（缺省 6 小时）：运行中 run 超过该时长强制取消（High-2 防永久 pending） */
     stuckRunTimeoutMs?: number;
+    /** P1.5 心智自有会话 id 供给（governance-audit §5）：活动视图剔除 + 让位判定；缺省空（心智会话混入自由会话=现状） */
+    mindSessionIds?: () => string[];
 }
 /** 自动归档阈值（主人拍板 P1）：「已完成」确认满 7 天自动归档——看板只呈现
  * 当前要关心的活；已失败/待办永不自动归档（失败是需要主人注意的信号）。 */
@@ -44,6 +46,11 @@ export interface BoardActivity {
         sessionId: string;
         title?: string;
     }>;
+    /** P1.5 心智唤醒现场（从自由会话剔除，分类正确不稀释活动权威） */
+    mindWake?: {
+        sessionId: string;
+        since: string;
+    };
     /** 自由会话里进行中的自主目标（goal 折叠，objective 截断 40 字，封顶 3） */
     goals: Array<{
         sessionId: string;
@@ -82,6 +89,8 @@ export declare class TaskBoardService {
     private ticking;
     private activity;
     constructor(gateway: TypertGateway, options?: ServiceOptions);
+    /** P1.5 心智自有会话 id（dsh-mind 服务面；缺席 → 空集，活动视图退化为混计=现状） */
+    private readonly mindSessionIds?;
     /**
      * 宿主启动对账（系统性修复：僵尸 run 卡死认领/上报）：会话是**进程本地**执行
      * 现场——上一进程遗留的「运行中」执行已随重启终止（turn 永远不会结束了）。
@@ -127,7 +136,9 @@ export declare class TaskBoardService {
      * 主人批准后重新认领即放行；L3 拒绝）。同一任务不允许并发双运行。
      * 结算语义：claimed run 的 turn/end 不结算（等 task_report），滞留由 stuck 兜底。
      */
-    claim(taskId: string, sessionId: string, trigger?: '手动' | '定时'): RunRecord;
+    claim(taskId: string, sessionId: string, trigger?: '手动' | '定时', opts?: {
+        claimedBy?: 'mind' | 'session';
+    }): RunRecord;
     /** tick：调度触发 + 运行中执行的结果判定。整体兜底 catch——任何单次失败
      *  （fs 抖动/网关挂起降级）都不允许以 unhandledRejection 击穿宿主进程（SRE H1）。 */
     tick(): Promise<void>;

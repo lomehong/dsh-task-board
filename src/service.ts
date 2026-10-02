@@ -33,6 +33,8 @@ export interface ServiceOptions {
   retryBackoffMs?: number
   /** 滞留兜底阈值毫秒（缺省 6 小时）：运行中 run 超过该时长强制取消（High-2 防永久 pending） */
   stuckRunTimeoutMs?: number
+  /** P1.5 心智自有会话 id 供给（governance-audit §5）：活动视图剔除 + 让位判定；缺省空（心智会话混入自由会话=现状） */
+  mindSessionIds?: () => string[]
 }
 
 /** 自动归档阈值（主人拍板 P1）：「已完成」确认满 7 天自动归档——看板只呈现
@@ -46,6 +48,8 @@ export interface BoardActivity {
   runningTasks: Array<{ taskId: string; title: string; sessionId?: string }>
   /** 运行中且无任务归属的会话（自由会话） */
   freeSessions: Array<{ sessionId: string; title?: string }>
+  /** P1.5 心智唤醒现场（从自由会话剔除，分类正确不稀释活动权威） */
+  mindWake?: { sessionId: string; since: string }
   /** 自由会话里进行中的自主目标（goal 折叠，objective 截断 40 字，封顶 3） */
   goals: Array<{ sessionId: string; title?: string; objective: string; roundsStarted: number; maxGoalRounds: number }>
   /** 待主人审批的任务 */
@@ -78,7 +82,11 @@ export class TaskBoardService {
     this.launchRetries = Math.max(0, options.launchRetries ?? 0)
     this.retryBackoffMs = Math.max(0, options.retryBackoffMs ?? 500)
     this.stuckRunTimeoutMs = Math.max(60_000, options.stuckRunTimeoutMs ?? 21_600_000)
+    this.mindSessionIds = options.mindSessionIds
   }
+
+  /** P1.5 心智自有会话 id（dsh-mind 服务面；缺席 → 空集，活动视图退化为混计=现状） */
+  private readonly mindSessionIds?: (() => string[]) | undefined
 
   /**
    * 宿主启动对账（系统性修复：僵尸 run 卡死认领/上报）：会话是**进程本地**执行
@@ -159,12 +167,22 @@ export class TaskBoardService {
       })
     const freeSessions: BoardActivity['freeSessions'] = []
     const goals: BoardActivity['goals'] = []
+    // P1.5（governance-audit §5）：心智唤醒会话从自由会话剔除，独立 mindWake 维度——
+    // 看板仍是唯一活动权威，但「任务执行现场」与「心智唤醒现场」分类正确不稀释。
+    // 标记缺失（dsh-mind 缺席）→ 退化为混计=现状（宪章 §3.2 显式降级）。
+    let mindWake: BoardActivity['mindWake'] | undefined
+    const mindIds = new Set<string>()
+    try { for (const id of this.mindSessionIds?.() ?? []) if (id !== '') mindIds.add(id) } catch { /* 显式降级 */ }
     try {
       const res = (await this.gatewayClient.invoke('session', 'list')) as {
         items?: ReadonlyArray<{ sessionId?: string; running?: boolean; title?: string }>
       }
       for (const it of res.items ?? []) {
         if (it.running !== true || it.sessionId === undefined || sessionIds.has(it.sessionId)) continue
+        if (mindIds.has(it.sessionId) && mindWake === undefined) {
+          mindWake = { sessionId: it.sessionId, since: at }
+          continue
+        }
         if (freeSessions.length >= 8) break
         freeSessions.push({ sessionId: it.sessionId, ...(it.title !== undefined && it.title !== '' ? { title: it.title } : {}) })
       }
@@ -201,7 +219,7 @@ export class TaskBoardService {
         }
       } catch { /* 单会话失败跳过 */ }
     }
-    this.activity = { at, runningTasks, freeSessions, pendingApprovals, recentCompleted, goals }
+    this.activity = { at, runningTasks, freeSessions, pendingApprovals, recentCompleted, goals, ...(mindWake !== undefined ? { mindWake } : {}) }
   }
 
   /** 状态快照（浏览器异步视图的完整数据面）。governance.mode 供客户端渲染治理徽标。 */
@@ -318,11 +336,33 @@ export class TaskBoardService {
    * 主人批准后重新认领即放行；L3 拒绝）。同一任务不允许并发双运行。
    * 结算语义：claimed run 的 turn/end 不结算（等 task_report），滞留由 stuck 兜底。
    */
-  claim(taskId: string, sessionId: string, trigger: '手动' | '定时' = '手动'): RunRecord {
+  claim(taskId: string, sessionId: string, trigger: '手动' | '定时' = '手动', opts?: { claimedBy?: 'mind' | 'session' }): RunRecord {
     const startedAtMs = Date.now()
     const startedAtIso = new Date(startedAtMs).toISOString()
     const task = this.taskOf(taskId)
     if (task === undefined) throw new Error(`任务不存在: ${taskId}`)
+    // P1.5（governance-audit §4）：心智唤醒会话不适用接管语义——存在运行中现场
+    // 即拒绝（宁可少干一票，不可覆盖主人/他人的工作现场）；board 级单飞。
+    if (opts?.claimedBy === 'mind') {
+      const running = task.runs.find(r => r.status === '运行中')
+      if (running !== undefined && running.sessionId !== sessionId) {
+        return this.recordRun(taskId, {
+          id: genId('RUN'), startedAt: startedAtIso, status: '已阻断', trigger,
+          summary: '任务正在由其他会话执行——心智不接管运行中的现场'
+        }, { keepColumn: true })
+      }
+      const board = loadBoard()
+      for (const t of board.tasks) {
+        for (const r of t.runs) {
+          if (t.id !== taskId && r.status === '运行中' && r.claimedBy === 'mind') {
+            return this.recordRun(taskId, {
+              id: genId('RUN'), startedAt: startedAtIso, status: '已阻断', trigger,
+              summary: `心智同时只能认领一个任务（${t.id} 运行中）`
+            }, { keepColumn: true })
+          }
+        }
+      }
+    }
     // 执行现场接管（防伪造 v2）：会话压缩/实例更替后，旧绑定会话已不可用——
     // 与其卡死诚实接管，不如取消旧现场（审计留痕）并把执行权交给新会话。
     // 同一会话重复认领仍是错误（执行现场已在你手上，直接干活后 task_report 即可）。
@@ -368,10 +408,19 @@ export class TaskBoardService {
         ...(verdict.reason !== undefined ? { summary: verdict.reason } : {}),
       }, verdict.mode === '本地' ? { keepColumn: true } : undefined)
     }
+    // P1.5（governance-audit §4.2）：心智会话仅可认领 L0/L1——L2/L3 即便授权在位，
+    // 也由主人通道派发执行会话（无人值守会话不做对外承诺类重活）。
+    if (opts?.claimedBy === 'mind' && (task.actionLevel === 'L2' || task.actionLevel === 'L3')) {
+      return this.recordRun(taskId, {
+        id: genId('RUN'), startedAt: startedAtIso, status: '已阻断', trigger,
+        summary: '心智会话仅可认领 L0/L1（L2/L3 由主人通道派发执行会话）'
+      }, { keepColumn: true })
+    }
     const run: RunRecord = {
       id: genId('RUN'), startedAt: startedAtIso, status: '运行中', trigger,
       sessionId,
       claimed: true,
+      ...(opts?.claimedBy !== undefined ? { claimedBy: opts.claimedBy } : {}),
       ...(verdict.recordId !== undefined ? { ledgerRecordId: verdict.recordId } : {}),
     }
     this.recordRun(taskId, run)

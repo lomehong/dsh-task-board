@@ -24,10 +24,26 @@ interface DelegateService {
     targetScope: string
     actionLevel: 'L0' | 'L1' | 'L2' | 'L3'
     cron?: string
+    /** P1.5 立项调用方会话 id（task_approve 防自批 v2 判定依据） */
+    originBy?: string
   }): Promise<{ id: string; title: string }>
   run(id: string, trigger: string): Promise<{ status?: string }>
   /** 会话认领执行（task_claim）：把调用会话绑定为执行现场，认领即治理裁决 */
-  claim(taskId: string, sessionId: string, trigger?: string): { status?: string; sessionId?: string; summary?: string }
+  claim(taskId: string, sessionId: string, trigger?: string, opts?: { claimedBy?: 'mind' | 'session' }): { status?: string; sessionId?: string; summary?: string }
+}
+
+/** P1.5 心智自有会话 id 供给（dsh-mind 服务面 sessionIds()；dsh-mind 缺席 → 空集=无心智判定，显式降级） */
+let mindSessionIdsGetter: (() => string[]) | undefined
+
+/** 宿主 index.ts 注入（工具执行时惰性解析；governance-audit F6 防自批 v2 依赖）。 */
+export function injectMindSessionIds(getter: (() => string[]) | undefined): void {
+	mindSessionIdsGetter = getter
+}
+
+function mindSessionIds(): Set<string> {
+	const ids = new Set<string>()
+	try { for (const id of mindSessionIdsGetter?.() ?? []) if (id !== '') ids.add(id) } catch { /* 显式降级 */ }
+	return ids
 }
 
 let serviceGetter: (() => DelegateService | undefined) | undefined
@@ -197,9 +213,11 @@ export function registerTaskTools(ctx: Context): void {
         if (svc === undefined || typeof svc.createWithGovernance !== 'function' || typeof svc.run !== 'function') {
           throw new Error('看板服务不可用（宿主未就绪）')
         }
+        // P1.5：立项调用方会话 id 落库（task_approve 防自批 v2 判定依据）
         const t = await svc.createWithGovernance({
           title, prompt, actionType, targetScope, actionLevel: level,
           ...(cron !== undefined ? { cron } : {}),
+          originBy: caller,
         })
         let runStatus = '未执行（run_now=false）'
         if (runNow) {
@@ -259,7 +277,8 @@ export function registerTaskTools(ctx: Context): void {
         if (caller === '') throw new Error('task_claim 必须在 agent 会话内调用（缺调用方身份）')
         const svc = serviceGetter?.()
         if (svc === undefined || typeof svc.claim !== 'function') throw new Error('看板服务不可用（宿主未就绪）')
-        const run = svc.claim(taskId, caller, '手动')
+        const claimedBy = mindSessionIds().has(caller) ? 'mind' : 'session'
+        const run = svc.claim(taskId, caller, '手动', { claimedBy })
         // 宿主按 lossless JSON 校验工具输出——undefined 属性会整包被拒（实测），
         // 只回传有值的字段
         return {
@@ -323,6 +342,11 @@ export function registerTaskTools(ctx: Context): void {
           if (lastRun.claimed !== true && lastRun.sessionId === caller) {
             throw new Error('不能批准自己执行会话的自报（防自批）——请主人在主人通道确认')
           }
+          // P1.5 防自批 v2（governance-audit F6）：心智自报也必须主人确认——
+          // 自治面（唤醒会话）不得以 task_approve 确认自己的产出。
+          if (mindSessionIds().has(caller)) {
+            throw new Error('心智会话不能确认自己的自报（防自批 v2）——请主人在主人通道确认')
+          }
           const r = confirmTaskResult(taskId, true, '主人会话确认')
           if (!r.ok) throw new Error(r.error ?? '确认失败')
           return { ok: true, task_id: taskId, action: '已确认完成', run_status: r.run?.status ?? '成功' }
@@ -336,6 +360,14 @@ export function registerTaskTools(ctx: Context): void {
         // 主人在场认领的会话（claimed）视为主人授权延伸，允许批准
         if (blockedRun.sessionId !== undefined && blockedRun.sessionId === caller && blockedRun.claimed !== true) {
           throw new Error('不能批准自己执行会话产生的审批（防自批）——请主人在主人通道批准')
+        }
+        // P1.5 防自批 v2（governance-audit F6）：run_now 阻断的运行记录不落
+        // sessionId——旧防自批对 undefined 恒放行，心智唤醒会话可自批自己立项
+        // 的 L2/L3 令牌（安全缺口）。规则：立项方（originBy）为心智会话时，
+        // 批准权只在主人通道。
+        const mindIds = mindSessionIds()
+        if (mindIds.has(caller) && task.originBy !== undefined && mindIds.has(task.originBy)) {
+          throw new Error('心智会话不能批准自己立项的审批（防自批 v2）——请主人在主人通道批准')
         }
         const ledger = currentLedger()
         if (ledger === undefined || typeof ledger.approve !== 'function' || typeof ledger.pendingApprovals !== 'function') {

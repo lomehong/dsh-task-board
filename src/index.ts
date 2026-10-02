@@ -18,7 +18,7 @@ import { createService } from './service.ts'
 import { confirmTaskResult } from './report.ts'
 import { injectLedgerGetter, injectNotifier, type LedgerModule } from './governance.ts'
 import { injectMemoryGetter, type TaskMemoryModule } from './memory.ts'
-import { injectServiceGetter, registerTaskTools } from './tools.ts'
+import { injectServiceGetter, injectMindSessionIds, registerTaskTools } from './tools.ts'
 import type { TypertGateway } from './gateway.ts'
 
 interface RequestLike {
@@ -168,6 +168,17 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
   // 预设行 '@dsh-extra/dsh-task-board/tools' 的 apply 在 agent 上下文执行时
   // 经此获取宿主 service（createWithGovernance 含 L2+ 预裁决）。
   injectServiceGetter(() => service)
+
+  // P1.5（governance-audit F6 防自批 v2）：心智自有会话 id 供给——惰性解析
+  // dsh-mind 服务面（宪章合法形态：可选增强 + 缺席降级为空集=无心智判定）。
+  injectMindSessionIds(() => {
+    try {
+      const mind = ctx.get('dsh-mind') as { sessionIds?: () => string[] } | undefined
+      return mind?.sessionIds?.() ?? []
+    } catch {
+      return []
+    }
+  })
 
   // v0.3.0 全模式工具注册（宪章 §0：任务看板是实例级资产）：看板四件套
   // （task_report / task_delegate / task_claim / task_approve）直接在宿主
