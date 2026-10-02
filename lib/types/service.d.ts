@@ -143,6 +143,14 @@ export declare class TaskBoardService {
      *  （fs 抖动/网关挂起降级）都不允许以 unhandledRejection 击穿宿主进程（SRE H1）。 */
     tick(): Promise<void>;
     private taskOf;
+    /** P1.5 阻断式审批推送（主人 IM 渠道）：run 落「待审批」时经此回调触达主人（task-board index.ts 注入；
+     *  推送失败静默——看板 UI 与主人会话的 task_approve 永远是兜底权威）。 */
+    onPendingApproval?: (info: {
+        taskId: string;
+        title: string;
+        level: string;
+        summary: string;
+    }) => Promise<void> | void;
     private recordRun;
     create(input: Parameters<typeof createTask>[0]): Promise<TaskRecord>;
     update(id: string, patch: Parameters<typeof updateTask>[1]): TaskRecord | undefined;

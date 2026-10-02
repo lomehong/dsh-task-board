@@ -539,6 +539,10 @@ export class TaskBoardService {
     return loadBoard().tasks.find(t => t.id === taskId)
   }
 
+  /** P1.5 阻断式审批推送（主人 IM 渠道）：run 落「待审批」时经此回调触达主人（task-board index.ts 注入；
+   *  推送失败静默——看板 UI 与主人会话的 task_approve 永远是兜底权威）。 */
+  onPendingApproval?: (info: { taskId: string; title: string; level: string; summary: string }) => Promise<void> | void
+
   private recordRun(taskId: string, run: RunRecord, opts?: { failColumn?: boolean; keepColumn?: boolean }): RunRecord {
     transact((store: TaskBoardStore) => {
       const t = store.tasks.find(x => x.id === taskId)
@@ -554,6 +558,15 @@ export class TaskBoardService {
       if (run.status === '成功') t.column = '已完成'
       t.updatedAt = new Date().toISOString()
     })
+    // P1.5：run 落「待审批」→ 触达主人（fire-and-forget；失败静默，看板权威兜底）
+    if (run.status === '待审批' && this.onPendingApproval !== undefined) {
+      const t = loadBoard().tasks.find(x => x.id === taskId)
+      if (t !== undefined) {
+        try {
+          void this.onPendingApproval({ taskId, title: t.title, level: t.actionLevel, summary: run.summary ?? '' })
+        } catch { /* 通知失败不影响主流程 */ }
+      }
+    }
     return run
   }
 

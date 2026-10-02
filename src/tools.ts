@@ -48,6 +48,7 @@ function mindSessionIds(): Set<string> {
 
 let serviceGetter: (() => DelegateService | undefined) | undefined
 
+
 /** 注入看板服务获取器（宿主 index.ts apply 内接线；工具执行时惰性解析）。 */
 export function injectServiceGetter(getter: (() => DelegateService | undefined) | undefined): void {
   serviceGetter = getter
