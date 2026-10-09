@@ -25,6 +25,12 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
       inject(name: string, setup: () => void): void
       register(slot: { name: string; id?: string; order?: number; label?: () => string; key?: string }, component: unknown): void
     }
+    /* * 惰性 DI（0.2.1：ctx.inject(['uiWorkspace'], …) 取会话预填面）；旧运行时可能无此方法。 */
+    inject?(names: readonly string[], fn: (scope: unknown) => void): void
+    /* * ui-workspace 客户端面（dsh.client.inject 声明 provider 后可注入）。 */
+    uiWorkspace?: {
+      startSession(workspaceId?: unknown, options?: { prompt?: string; clearPreviousDraft?: boolean }): void
+    }
   }
 }
 // alpha.2 新增 slot 的 SlotMap 增强（官方契约：ui-layout main + ui-sidebar panellist）。
@@ -39,10 +45,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 declare namespace React {
   type CSSProperties = Record<string, string | number | undefined>
+  interface MouseEvent { stopPropagation(): void; preventDefault(): void }
   interface ChangeEvent { target: { value: string }; stopPropagation(): void }
-}
-declare namespace React {
-  type CSSProperties = Record<string, string | number | undefined>
 }
 declare namespace JSX {
   type Element = any

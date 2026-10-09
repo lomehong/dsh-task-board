@@ -120,6 +120,23 @@ const s: Record<string, React.CSSProperties> = {
   modalActions: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 },
 }
 
+/**
+ * ui-workspace 会话面（0.2.1 起 startSession 支持 { prompt } 预填）：apply() 经
+ * 惰性 DI 注入；旧运行时（无该服务或无 options 形状）为 undefined——「会话执行」
+ * 按钮降级为提示，旧形状下 options 被忽略则退化为普通跳新会话，均不崩。
+ */
+let uiWorkspaceFace: { startSession(workspaceId?: unknown, options?: { prompt?: string; clearPreviousDraft?: boolean }): void } | undefined
+
+/** 带「执行提示词」跳新会话：主人可 interactive 接手/改写后再发（区别于 ▶执行 的自动跑）。 */
+function openTaskInSession(prompt: string): void {
+  const face = uiWorkspaceFace
+  if (face === undefined) {
+    boardNotify('会话预填不可用（需要 dsh 运行时 ≥ 0.2.1）——请复制任务提示词手动开新会话。')
+    return
+  }
+  face.startSession(undefined, { prompt, clearPreviousDraft: true })
+}
+
 function api<T>(path: string, body?: unknown): Promise<T> {
   const opts: RequestInit = { credentials: 'include', headers: { Accept: 'application/json' } }
   if (body !== undefined) {
@@ -579,6 +596,9 @@ function TaskDetailModal({ task, onAction, onClose }: {
         )}
 
         <div style={s.modalActions}>
+          <button style={s.btn2} onClick={() => openTaskInSession(task.prompt)} title="开新会话并预填执行提示词，主人可改写后发送">
+            💬 会话执行
+          </button>
           {/* P1.5 控制台就地审批（主人拍板：在电脑旁走控制台，不打扰 IM） */}
           {lastRun?.status === '待审批' && (
             <>
@@ -611,6 +631,10 @@ function TaskDetailModal({ task, onAction, onClose }: {
 // 那既没有挂进 conversation.view 槽位（看板 Tab 不渲染），也会在 DI 缺失时
 // 抛 "cannot get property slots without inject"（2026-09-05 自锁同类事故）。
 export function apply(ctx: ClientContext): void {
+  // 会话预填面（0.2.1+）：惰性注入，服务缺席（旧运行时）静默——按钮点击时降级提示。
+  ctx.inject?.(['uiWorkspace'], (scope: unknown) => {
+    uiWorkspaceFace = (scope as { uiWorkspace?: typeof uiWorkspaceFace }).uiWorkspace
+  })
   ctx.slots.inject('conversation.view', () =>
     ctx.slots.register(
       { name: 'conversation.view', id: 'task-board', order: 22, label: () => '任务看板' },
