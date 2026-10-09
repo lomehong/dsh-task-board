@@ -180,6 +180,68 @@ function BoardToasts(): JSX.Element {
   )
 }
 
+/**
+ * 全局任务状态条（0.2.1 shell.bottom 槽，批次C）：三列之下的单行常驻条，
+ * 主人不切看板 Tab 也能看到「待审批/待确认」这类需要行动的信号。
+ * - 30s 轮询 + 页面隐藏暂停 + 看板动作广播即时刷新；
+ * - 无活动任务时渲染 null（槽契约：空内容不占空间）；
+ * - shell.bottom 是单席位：其他占者已注册时本条静默让位。
+ */
+function BoardStatusBar(): JSX.Element {
+  const [summary, setSummary] = useState<{ running: number; approvals: number; confirms: number; latest?: string } | null>(null)
+
+  const refresh = useCallback(async () => {
+    if (document.hidden) return
+    try {
+      const d = await api<{ ok: boolean; state?: BoardState }>('/dsh-task-board/state')
+      if (!d.ok || d.state === undefined) return
+      const active = d.state.tasks.filter(t => !t.archived)
+      if (active.length === 0) { setSummary(null); return }
+      const running = active.filter(t => t.column === '进行中').length
+      const approvals = active.reduce((n, t) => n + t.runs.filter(r => r.status === '待审批').length, 0)
+      const confirms = active.reduce((n, t) => n + t.runs.filter(r => r.status === '待确认').length, 0)
+      const latest = [...active].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.title
+      setSummary({ running, approvals, confirms, latest })
+    } catch { /* 服务不可用：保留上次摘要 */ }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    const timer = setInterval(() => { void refresh() }, 30_000)
+    const onVisible = (): void => { if (!document.hidden) void refresh() }
+    const onStateChanged = (): void => { void refresh() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('dsh-task-board:state-changed', onStateChanged)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('dsh-task-board:state-changed', onStateChanged)
+    }
+  }, [refresh])
+
+  // 只有出现需要行动/关注的状态（执行中/待审批/待确认）才占空间；
+  // 纯待办闲置态不渲染（槽契约：空内容不占空间），看板 Tab 里自有全貌。
+  if (summary === null || (summary.running === 0 && summary.approvals === 0 && summary.confirms === 0)) return <></>
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, padding: '5px 16px',
+      fontSize: 12, color: 'var(--dsw-alias-label-secondary)',
+      background: 'var(--dsw-alias-bg-layer-2)', borderTop: '1px solid var(--dsw-alias-border-l1)',
+      whiteSpace: 'nowrap', overflow: 'hidden',
+    }}>
+      <span style={{ fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }}>看板</span>
+      {summary.running > 0 && <span style={{ color: 'var(--dsw-alias-state-business-primary)' }}>● 进行中 {summary.running}</span>}
+      {summary.approvals > 0 && <span style={{ color: 'var(--dsw-alias-state-error-primary)', fontWeight: 600 }}>⚠ 待审批 {summary.approvals}</span>}
+      {summary.confirms > 0 && <span style={{ color: 'var(--dsw-alias-state-warn-primary)', fontWeight: 600 }}>◇ 待确认 {summary.confirms}</span>}
+      {summary.latest !== undefined && (
+        <span style={{ color: 'var(--dsw-alias-label-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          最新：{summary.latest}
+        </span>
+      )}
+    </div>
+  )
+}
+
 function levelStyle(level: string): React.CSSProperties {
   if (level === 'L2' || level === 'L3') return s.levelErr
   if (level === 'L1') return s.levelWarn
@@ -212,7 +274,11 @@ function BoardPage() {
 
   const load = useCallback(async () => {
     const d = await api<{ ok: boolean; state?: BoardState }>('/dsh-task-board/state')
-    if (d.ok && d.state !== undefined) setState(d.state)
+    if (d.ok && d.state !== undefined) {
+      setState(d.state)
+      // 广播给 shell.bottom 全局状态条（批次C）：看板内任何动作后条子即时跟随
+      window.dispatchEvent(new CustomEvent('dsh-task-board:state-changed'))
+    }
   }, [])
   useEffect(() => { void load() }, [load])
 
@@ -655,6 +721,13 @@ export function apply(ctx: ClientContext): void {
   const slots = ctx.slots as ClientContext['slots'] & { spec?: (name: string) => unknown }
   if (typeof slots.spec !== 'function') return
   try {
+    // 0.2.1 shell.bottom（根级底部单席位，批次C）：状态条让「待审批/待确认」
+    // 不切 Tab 也可见。单席位被占（其他插件先注册）时本条静默让位。
+    if (slots.spec('shell.bottom') !== undefined) {
+      ctx.slots.inject('shell.bottom', () =>
+        ctx.slots.register({ name: 'shell.bottom', id: 'task-board-status' }, BoardStatusBar),
+      )
+    }
     const registerNew = slots.register as unknown as (slot: Record<string, unknown>, component: unknown) => void
     if (slots.spec('main') !== undefined) {
       ctx.slots.inject('main', () =>
