@@ -198,8 +198,13 @@ function BoardStatusBar(): JSX.Element {
       const active = d.state.tasks.filter(t => !t.archived)
       if (active.length === 0) { setSummary(null); return }
       const running = active.filter(t => t.column === '进行中').length
-      const approvals = active.reduce((n, t) => n + t.runs.filter(r => r.status === '待审批').length, 0)
-      const confirms = active.reduce((n, t) => n + t.runs.filter(r => r.status === '待确认').length, 0)
+      // P2 修正（2026-10-10 主人实测）：只统计每条任务「最新一次 run」的状态——
+      // 历史遗留 run（被重跑/放行取代的老待审批）不再永久计入 ⚠️ 计数
+      // （同一任务重跑后老 run 状态定格待审批，旧口径导致 ⚠️ 永挂）。
+      const latestRun = (t: { runs?: Array<{ status: string }> }): { status: string } | undefined =>
+        t.runs && t.runs.length > 0 ? t.runs[t.runs.length - 1] : undefined
+      const approvals = active.filter(t => latestRun(t)?.status === '待审批').length
+      const confirms = active.filter(t => latestRun(t)?.status === '待确认').length
       const latest = [...active].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.title
       setSummary({ running, approvals, confirms, latest })
     } catch { /* 服务不可用：保留上次摘要 */ }
