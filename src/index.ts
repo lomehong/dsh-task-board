@@ -191,9 +191,8 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
   function ensureOwnerPeer(): GatewayPeer {
     if (ownerPeer !== undefined) return ownerPeer
     try {
-      const connection = ctx.get('connection') as
-        | { createPeer?: (opts: { principal: { kind: string } }) => GatewayPeer }
-        | undefined
+      const connection = (ctx as unknown as { connection?: { createPeer?: (opts: { principal: { kind: string } }) => GatewayPeer } }).connection
+        ?? (ctx.get('connection') as { createPeer?: (opts: { principal: { kind: string } }) => GatewayPeer } | undefined)
       if (connection?.createPeer === undefined) throw new Error('connection 服务缺席')
       ownerPeer = connection.createPeer({ principal: { kind: 'owner' } })
       return ownerPeer
@@ -404,4 +403,4 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
   })
 }
 
-export default Object.assign(apply, { inject: ['typertGateway'] })
+export default Object.assign(apply, { inject: ['typertGateway', 'connection'] })
