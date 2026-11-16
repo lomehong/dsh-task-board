@@ -13,7 +13,7 @@
  *     └─ cancelled → RunRecord「已取消」+ 任务列「已失败」
  */
 import type { TypertGateway } from './gateway.ts'
-import { GatewayClient, sessionAddress } from './gateway.ts'
+import { GatewayClient, sessionAddress, type GatewayPeer } from './gateway.ts'
 import { TaskRunner } from './runner.ts'
 import { adjudicate, currentLedger, fillResult, ledgerAvailable } from './governance.ts'
 import { recordTaskOutcome } from './memory.ts'
@@ -23,6 +23,8 @@ import type { TaskRecord, RunRecord, TaskBoardStore } from './ledger.ts'
 import { collectDueTasks } from './scheduler.ts'
 
 export interface ServiceOptions {
+  /** 进程内 owner Peer（宿主 0.2.2 起 invoke 必带——2026-11-16 事故修正；必填） */
+  peer: GatewayPeer
   /** 默认工作区（任务未钉扎 workspaceId 时使用） */
   defaultWorkspaceId?: string
   /** tick 间隔毫秒（缺省 15s；测试可调小） */
@@ -74,8 +76,8 @@ export class TaskBoardService {
     runningTasks: [], freeSessions: [], goals: [], pendingApprovals: [], recentCompleted: [],
   }
 
-  constructor(gateway: TypertGateway, options: ServiceOptions = {}) {
-    this.gatewayClient = new GatewayClient(gateway)
+  constructor(gateway: TypertGateway, options: ServiceOptions) {
+    this.gatewayClient = new GatewayClient(gateway, options.peer)
     this.runner = new TaskRunner(this.gatewayClient)
     this.tickIntervalMs = options.tickIntervalMs ?? 15_000
     this.defaultWorkspaceId = options.defaultWorkspaceId !== undefined ? options.defaultWorkspaceId : undefined
@@ -634,7 +636,7 @@ export class TaskBoardService {
 }
 
 /** 供路由层构造（每个宿主进程一个服务实例）。 */
-export function createService(gateway: TypertGateway, options?: ServiceOptions): TaskBoardService {
+export function createService(gateway: TypertGateway, options: ServiceOptions): TaskBoardService {
   return new TaskBoardService(gateway, options)
 }
 

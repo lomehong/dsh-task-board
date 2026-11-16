@@ -12,7 +12,7 @@
  * turn/end（时间不早于启动时刻）→ turn/end 带 error 即失败，否则成功；
  * 会话消失 = 已取消；找不到边界 = 仍在进行。
  */
-import { GatewayClient, type TypertGateway } from './gateway.ts';
+import { GatewayClient, type GatewayPeer, type TypertGateway } from './gateway.ts';
 import type { TaskRecord } from './ledger.ts';
 export declare const EXECUTION_PRESET = "digital-twin";
 export type ExecutionOutcome = {
@@ -42,6 +42,8 @@ export declare class TaskRunner {
     private readonly presetId;
     private readonly gateway;
     constructor(gateway: GatewayClient | TypertGateway, 
+    /** 进程内 owner Peer（宿主 0.2.2 起 invoke 必带；GatewayClient 已绑定时可省） */
+    peer?: GatewayPeer, 
     /** 执行预设 id；缺省 digital-twin（决策五：分身是唯一执行身份） */
     presetId?: string);
     /** 投递任务：返回执行会话与 goal 播种状态。投递失败抛错（fail-closed）；

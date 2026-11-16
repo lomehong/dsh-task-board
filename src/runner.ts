@@ -12,7 +12,7 @@
  * turn/end（时间不早于启动时刻）→ turn/end 带 error 即失败，否则成功；
  * 会话消失 = 已取消；找不到边界 = 仍在进行。
  */
-import { GatewayClient, sessionAddress, type SessionPage, type SessionSummary, type TypertGateway } from './gateway.ts'
+import { GatewayClient, sessionAddress, type GatewayPeer, type SessionPage, type SessionSummary, type TypertGateway } from './gateway.ts'
 import { composePrompt } from './prompt.ts'
 import type { TaskRecord } from './ledger.ts'
 import { foldGoalFromRecords, goalCreateSpec, GOAL_ROUNDS_BY_LEVEL } from './goals.ts'
@@ -37,15 +37,24 @@ export class LaunchError extends Error {
   }
 }
 
+/** 进程内 owner Peer 缺失（宿主 0.2.2 起 invoke 必带 peer）。 */
+function throwMissingPeer(): never {
+  throw new Error('TaskRunner 需要 owner Peer（宿主 0.2.2 起 invoke 必带 peer；经 connection.createPeer 构造）')
+}
+
 export class TaskRunner {
   private readonly gateway: GatewayClient
 
   constructor(
     gateway: GatewayClient | TypertGateway,
+    /** 进程内 owner Peer（宿主 0.2.2 起 invoke 必带；GatewayClient 已绑定时可省） */
+    peer?: GatewayPeer,
     /** 执行预设 id；缺省 digital-twin（决策五：分身是唯一执行身份） */
     private readonly presetId: string = EXECUTION_PRESET,
   ) {
-    this.gateway = gateway instanceof GatewayClient ? gateway : new GatewayClient(gateway)
+    this.gateway = gateway instanceof GatewayClient
+      ? gateway
+      : new GatewayClient(gateway, peer ?? throwMissingPeer())
   }
 
   /** 投递任务：返回执行会话与 goal 播种状态。投递失败抛错（fail-closed）；

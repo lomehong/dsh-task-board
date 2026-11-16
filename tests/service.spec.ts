@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TypertGateway, SessionSummary, SessionPage } from '../src/gateway.ts'
+import { testGatewayPeer } from '../src/gateway.ts'
 import { TaskRunner } from '../src/runner.ts'
 import { createService } from '../src/service.ts'
 import { collectDueTasks } from '../src/scheduler.ts'
@@ -91,7 +92,7 @@ afterEach(() => {
 describe('TaskRunner：执行会话与完成判定', () => {
   it('launch 创建会话→重命名→投递提示词；inspect 在会话不再运行时 pending（无 turn/end）', async () => {
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
-    const runner = new TaskRunner(buildGateway(state))
+    const runner = new TaskRunner(buildGateway(state), testGatewayPeer())
     const task = createTask({ title: '汇总', prompt: '做汇总', actionType: '整理', targetScope: '记忆库', actionLevel: 'L1' })
     const { sessionId: sid, goalSeeded } = await runner.launch(task)
     expect(sid).toBe('S-1')
@@ -106,7 +107,7 @@ describe('TaskRunner：执行会话与完成判定', () => {
 
   it('launch fail-closed：broken 预设直接抛错，不创建会话', async () => {
     const state: FakeState = { presets: [{ id: 'digital-twin', broken: 'plugin missing' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
-    const runner = new TaskRunner(buildGateway(state))
+    const runner = new TaskRunner(buildGateway(state), testGatewayPeer())
     const task = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
     await expect(runner.launch(task)).rejects.toThrow(/不可用.*plugin missing/)
     expect(state.sessions.size).toBe(0)
@@ -114,14 +115,14 @@ describe('TaskRunner：执行会话与完成判定', () => {
 
   it('launch fail-closed：会话创建失败抛错带原因', async () => {
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage, failOnCreate: true }
-    const runner = new TaskRunner(buildGateway(state))
+    const runner = new TaskRunner(buildGateway(state), testGatewayPeer())
     const task = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
     await expect(runner.launch(task)).rejects.toThrow(/任务投递失败/)
   })
 
   it('inspect：会话不存在 → 已取消；会话结束运行 + turn/end success → 成功', async () => {
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: () => ({ records: [{ event: { type: 'turn/end', seq: 1, time: Date.now(), data: { reason: { kind: 'finish' } } } }], hasMore: false }) }
-    const runner = new TaskRunner(buildGateway(state))
+    const runner = new TaskRunner(buildGateway(state), testGatewayPeer())
     const task = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
     const { sessionId: sid } = await runner.launch(task)
     // 模拟执行完毕（不再 running）
@@ -132,7 +133,7 @@ describe('TaskRunner：执行会话与完成判定', () => {
 
   it('inspect：turn/end 带 error → 失败', async () => {
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: () => ({ records: [{ event: { type: 'turn/end', seq: 1, time: Date.now(), data: { reason: { kind: 'error' } } } }], hasMore: false }) }
-    const runner = new TaskRunner(buildGateway(state))
+    const runner = new TaskRunner(buildGateway(state), testGatewayPeer())
     const task = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
     const { sessionId: sid } = await runner.launch(task)
     state.sessions.get(sid)!.running = false
@@ -233,7 +234,7 @@ describe('service：执行状态机', () => {
   it('run：账本缺席本地降级——L1 放行运行，summary 标注无账本治理', async () => {
     injectLedgerGetter(() => undefined) // 测试环境确保账本缺席
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
-    const svc = createService(buildGateway(state))
+    const svc = createService(buildGateway(state), { peer: testGatewayPeer() })
     const t = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
     const run = await svc.run(t.id, '手动')
     expect(run.status).toBe('运行中')
@@ -246,7 +247,7 @@ describe('service：执行状态机', () => {
     injectLedgerGetter(() => undefined)
     injectNotifier(() => undefined)
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
-    const svc = createService(buildGateway(state))
+    const svc = createService(buildGateway(state), { peer: testGatewayPeer() })
     const t = createTask({ title: '高危', prompt: 'p', actionType: '转账', targetScope: '外部', actionLevel: 'L3' })
     const run = await svc.run(t.id, '手动')
     expect(run.status).toBe('已阻断')
@@ -260,7 +261,7 @@ describe('service：执行状态机', () => {
   it('state：治理模式随账本在场与否切换', async () => {
     injectLedgerGetter(() => undefined)
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
-    const svc = createService(buildGateway(state))
+    const svc = createService(buildGateway(state), { peer: testGatewayPeer() })
     expect(svc.state().governance.mode).toBe('本地')
     injectLedgerGetter(() => ({ check: () => ({ record: { id: 'R', status: '已放行' }, judgment: { decision: '放行', level: 'L1' } }), fillResult: () => ({ ok: true }) }))
     expect(svc.state().governance.mode).toBe('账本')
@@ -273,7 +274,7 @@ describe('service：执行状态机', () => {
     }
     injectLedgerGetter(() => fake)
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
-    const svc = createService(buildGateway(state))
+    const svc = createService(buildGateway(state), { peer: testGatewayPeer() })
     const t = createTask({ title: 't', prompt: 'p', actionType: 'a', targetScope: 'b' })
     const run = await svc.run(t.id, '手动')
     expect(run.status).toBe('运行中')
@@ -288,7 +289,7 @@ describe('service：执行状态机', () => {
     }
     injectLedgerGetter(() => fake)
     const state: FakeState = { presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }
-    const svc = createService(buildGateway(state))
+    const svc = createService(buildGateway(state), { peer: testGatewayPeer() })
     await svc.create({ title: '高危', prompt: 'p', actionType: '外部动作', targetScope: '外部', actionLevel: 'L2' })
     expect(fake.check).toHaveBeenCalled() // 创建时立即裁决（与决策二「从出生就在治理框架内」对齐）
   })
@@ -299,7 +300,7 @@ describe('service：执行状态机', () => {
       fillResult: () => ({ ok: true }),
     }
     injectLedgerGetter(() => fake)
-    const svc = createService(buildGateway({ presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }))
+    const svc = createService(buildGateway({ presets: [{ id: 'digital-twin' }], sessions: new Map(), prompts: [], nextSessionId: 1, page: noEventsPage }), { peer: testGatewayPeer() })
     await svc.create({ title: '低风险', prompt: 'p', actionType: '整理', targetScope: '记忆库', actionLevel: 'L1' })
     expect(fake.check).toHaveBeenCalledTimes(1)
   })

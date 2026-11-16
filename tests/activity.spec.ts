@@ -10,8 +10,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createTask, transact } from '../src/ledger.ts'
 import { TaskBoardService } from '../src/service.ts'
+import { testGatewayPeer } from '../src/gateway.ts'
 import { injectLedgerGetter } from '../src/governance.ts'
-import { injectServiceGetter } from '../src/tools.ts'
 import { injectServiceGetter } from '../src/tools.ts'
 
 let home: string
@@ -73,7 +73,7 @@ describe('activityView（看板 = 唯一活动权威）', () => {
         return (async function* () { yield snapshot })()
       },
     }
-    const service = new TaskBoardService(gateway)
+    const service = new TaskBoardService(gateway, { peer: testGatewayPeer() })
     await service.refreshActivity()
     const act = service.activityView()
     expect(act.runningTasks).toEqual([{ taskId: a.id, title: '任务A 执行中', sessionId: 'sess-task' }])
@@ -103,7 +103,7 @@ describe('activityView（看板 = 唯一活动权威）', () => {
       },
       stream: async () => { throw new Error('no stream') },
     }
-    const service = new TaskBoardService(gateway)
+    const service = new TaskBoardService(gateway, { peer: testGatewayPeer() })
     await service.refreshActivity()
     const act = service.activityView()
     expect(act.freeSessions).toEqual([])
@@ -294,7 +294,7 @@ describe('task_claim（对话内认领执行，主人拍板）', () => {
 
   it('L1 任务认领：放行并绑定调用会话（claimed run 运行中）', async () => {
     const t = createTask({ title: '【测试】开发任务', prompt: 'p', actionType: '开发', targetScope: '本机仓库', actionLevel: 'L1' })
-    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never, { peer: testGatewayPeer() }) as never)
     const claim = await registerClaimTool()
     const out = (await claim.execute({ task_id: t.id }, { agent: { id: 'session-master-1' } })) as { ok: boolean; run_status: string }
     expect(out.ok).toBe(true)
@@ -308,7 +308,7 @@ describe('task_claim（对话内认领执行，主人拍板）', () => {
 
   it('L3 禁区任务：认领即拒绝（本地降级）', async () => {
     const t = createTask({ title: '【测试】L3 禁区', prompt: 'p', actionType: '转账', targetScope: '外部', actionLevel: 'L3' })
-    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never, { peer: testGatewayPeer() }) as never)
     const claim = await registerClaimTool()
     const out = (await claim.execute({ task_id: t.id }, { agent: { id: 'session-master-1' } })) as { ok: boolean; run_status: string }
     expect(out.ok).toBe(true)
@@ -317,7 +317,7 @@ describe('task_claim（对话内认领执行，主人拍板）', () => {
 
   it('执行现场接管：他会话的运行中执行 → 新会话认领即接管（旧现场取消留审计）', async () => {
     const t = createTask({ title: '【测试】跨会话接管', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
-    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never, { peer: testGatewayPeer() }) as never)
     const claim = await registerClaimTool()
     const first = (await claim.execute({ task_id: t.id }, { agent: { id: 's1' } })) as { run_status: string }
     expect(first.run_status).toBe('运行中')
@@ -334,7 +334,7 @@ describe('task_claim（对话内认领执行，主人拍板）', () => {
 
   it('同会话重复认领 → 已阻断（执行现场已在你手上）', async () => {
     const t = createTask({ title: '【测试】同会话重复', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
-    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never, { peer: testGatewayPeer() }) as never)
     const claim = await registerClaimTool()
     const first = (await claim.execute({ task_id: t.id }, { agent: { id: 's1' } })) as { run_status: string }
     expect(first.run_status).toBe('运行中')
@@ -344,7 +344,7 @@ describe('task_claim（对话内认领执行，主人拍板）', () => {
 
   it('认领成功的返回值不得携带 undefined 属性（回归：宿主 lossless JSON 校验整包拒绝）', async () => {
     const t = createTask({ title: '【测试】无摘要认领', prompt: 'p', actionType: '开发', targetScope: '本机', actionLevel: 'L1' })
-    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never) as never)
+    injectServiceGetter(() => new TaskBoardService({ invoke: async () => ({}) } as never, { peer: testGatewayPeer() }) as never)
     const claim = await registerClaimTool()
     const out = (await claim.execute({ task_id: t.id }, { agent: { id: 's1' } })) as Record<string, unknown>
     for (const [k, v] of Object.entries(out)) {
@@ -383,7 +383,7 @@ describe('启动对账（settleOrphanedRuns）', () => {
       const fl = store.tasks.find(x => x.id === failed.id)!; fl.column = '已失败'; fl.updatedAt = old
       const p = store.tasks.find(x => x.id === pending.id)!; p.column = '待办'; p.updatedAt = old
     })
-    const svc = new TaskBoardService({ invoke: async () => ({}) } as never)
+    const svc = new TaskBoardService({ invoke: async () => ({}) } as never, { peer: testGatewayPeer() })
     await svc.tick()
     const board = lb()
     expect(board.tasks.find(x => x.id === done.id)?.archived).toBe(true)
@@ -400,7 +400,7 @@ describe('启动对账（settleOrphanedRuns）', () => {
       task.runs.push({ id: 'RUN-orphan', status: '运行中', startedAt: new Date().toISOString(), trigger: '手动', sessionId: 'session-dead' } as never)
       task.column = '进行中'
     })
-    const svc = new TaskBoardService({ invoke: async () => ({}) } as never)
+    const svc = new TaskBoardService({ invoke: async () => ({}) } as never, { peer: testGatewayPeer() })
     const n = svc.settleOrphanedRuns()
     expect(n).toBe(1)
     const task = lb().tasks.find(x => x.id === t.id)!

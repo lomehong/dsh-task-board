@@ -13,9 +13,12 @@
  *     └─ cancelled → RunRecord「已取消」+ 任务列「已失败」
  */
 import type { TypertGateway } from './gateway.ts';
+import { type GatewayPeer } from './gateway.ts';
 import { createTask, updateTask } from './ledger.ts';
 import type { TaskRecord, RunRecord, TaskBoardStore } from './ledger.ts';
 export interface ServiceOptions {
+    /** 进程内 owner Peer（宿主 0.2.2 起 invoke 必带——2026-11-16 事故修正；必填） */
+    peer: GatewayPeer;
     /** 默认工作区（任务未钉扎 workspaceId 时使用） */
     defaultWorkspaceId?: string;
     /** tick 间隔毫秒（缺省 15s；测试可调小） */
@@ -88,7 +91,7 @@ export declare class TaskBoardService {
     private readonly stuckRunTimeoutMs;
     private ticking;
     private activity;
-    constructor(gateway: TypertGateway, options?: ServiceOptions);
+    constructor(gateway: TypertGateway, options: ServiceOptions);
     /** P1.5 心智自有会话 id（dsh-mind 服务面；缺席 → 空集，活动视图退化为混计=现状） */
     private readonly mindSessionIds?;
     /**
@@ -176,5 +179,5 @@ export declare class TaskBoardService {
     remove(id: string): boolean;
 }
 /** 供路由层构造（每个宿主进程一个服务实例）。 */
-export declare function createService(gateway: TypertGateway, options?: ServiceOptions): TaskBoardService;
+export declare function createService(gateway: TypertGateway, options: ServiceOptions): TaskBoardService;
 export type { TaskRecord, RunRecord, TaskBoardStore };

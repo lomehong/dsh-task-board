@@ -19,7 +19,7 @@ import { confirmTaskResult } from './report.ts'
 import { injectLedgerGetter, injectNotifier, type LedgerModule } from './governance.ts'
 import { injectMemoryGetter, type TaskMemoryModule } from './memory.ts'
 import { injectServiceGetter, injectMindSessionIds, registerTaskTools } from './tools.ts'
-import type { TypertGateway } from './gateway.ts'
+import type { GatewayPeer, TypertGateway } from './gateway.ts'
 
 interface RequestLike {
   method?: string
@@ -184,7 +184,24 @@ function apply(ctx: Context & { typertGateway: TypertGateway; logger?: { info?: 
   }
 
   // 1) service 立即组装 + 启动 cron tick（typertGateway 已通过 default 函数上的 inject 声明）
-  const service = createService(ctx.typertGateway)
+  // 2026-11-16 事故修正：宿主 0.2.2-rc.3 起 typertGateway invoke 必带进程内 owner Peer
+  // （缺 peer 时 assertPeerLive 读 peer.signal 直接炸）。经 connection.createPeer 懒建
+  // 一只 owner Peer；connection 缺席（宿主过旧）→ 抛错由投递 fail-closed 路径兜住。
+  let ownerPeer: GatewayPeer | undefined
+  function ensureOwnerPeer(): GatewayPeer {
+    if (ownerPeer !== undefined) return ownerPeer
+    try {
+      const connection = ctx.get('connection') as
+        | { createPeer?: (opts: { principal: { kind: string } }) => GatewayPeer }
+        | undefined
+      if (connection?.createPeer === undefined) throw new Error('connection 服务缺席')
+      ownerPeer = connection.createPeer({ principal: { kind: 'owner' } })
+      return ownerPeer
+    } catch (error) {
+      throw new Error(`无法构造进程内 owner Peer（宿主 0.2.2 起 invoke 必带）: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  const service = createService(ctx.typertGateway, { peer: ensureOwnerPeer() })
   service.logger = ctx.logger
   // 启动对账（系统性修复）：上一进程遗留的「运行中」run 已随重启终止（会话是
   // 进程本地执行现场）——一律结算为已取消，避免僵尸 run 卡死认领/上报/滞留兜底
